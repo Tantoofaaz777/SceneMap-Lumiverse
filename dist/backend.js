@@ -238,8 +238,13 @@ function formatPrimitive(value) {
 function trackerToText(tracker) {
   if (!tracker || typeof tracker !== "object" || Array.isArray(tracker))
     return "";
+  const record = tracker;
+  const sceneLines = renderSceneMapSummary(record);
+  if (sceneLines.length > 0)
+    return sceneLines.join(`
+`);
   const lines = [];
-  for (const [key, value] of Object.entries(tracker)) {
+  for (const [key, value] of Object.entries(record)) {
     const child = trackerValueToText(key, value);
     if (child.length === 0)
       continue;
@@ -249,6 +254,61 @@ function trackerToText(tracker) {
   }
   return lines.join(`
 `);
+}
+function renderSceneMapSummary(tracker) {
+  const lines = [];
+  pushPrimitiveLine(lines, "Time", tracker.time);
+  pushPrimitiveLine(lines, "Location", tracker.location);
+  pushPrimitiveLine(lines, "Weather", tracker.weather);
+  const topics = tracker.topics && typeof tracker.topics === "object" && !Array.isArray(tracker.topics) ? tracker.topics : null;
+  if (topics) {
+    const tone = [
+      formatPrimitive(topics.primaryTopic),
+      formatPrimitive(topics.emotionalTone),
+      formatPrimitive(topics.interactionTheme)
+    ].filter(Boolean);
+    if (tone.length > 0) {
+      if (lines.length > 0)
+        lines.push("");
+      lines.push(`Scene tone: ${tone.join("; ")}.`);
+    }
+  }
+  if (Array.isArray(tracker.charactersPresent) && tracker.charactersPresent.length > 0) {
+    const present = tracker.charactersPresent.map(formatPrimitive).filter(Boolean);
+    if (present.length > 0)
+      lines.push(`Present: ${present.join(", ")}.`);
+  }
+  if (Array.isArray(tracker.characters) && tracker.characters.length > 0) {
+    for (const character of tracker.characters) {
+      if (!character || typeof character !== "object" || Array.isArray(character))
+        continue;
+      const characterLines = renderCharacterSummary(character);
+      if (characterLines.length === 0)
+        continue;
+      if (lines.length > 0)
+        lines.push("");
+      lines.push(...characterLines);
+    }
+  }
+  return lines;
+}
+function pushPrimitiveLine(lines, label, value) {
+  const text = formatPrimitive(value);
+  if (text)
+    lines.push(`${label}: ${text}`);
+}
+function renderCharacterSummary(character) {
+  const name = formatPrimitive(character.name) || "Character";
+  const lines = [`${name}:`];
+  for (const [key, value] of Object.entries(character)) {
+    if (key === "name")
+      continue;
+    const text = formatPrimitive(value);
+    if (!text)
+      continue;
+    lines.push(`- ${humanizeTrackerKey(key)}: ${text}`);
+  }
+  return lines.length > 1 ? lines : [];
 }
 function trackerValueToText(key, value, depth = 0) {
   const indent = "  ".repeat(depth);
