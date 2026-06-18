@@ -34,15 +34,14 @@ const activeGenerations = new Map<string, AbortController>();
 
 async function loadSettings(userId?: string): Promise<SceneMapSettings> {
   return mergeSettings(
-    await spindle.userStorage.getJson<Partial<SceneMapSettings>>(SETTINGS_PATH, {
+    await spindle.storage.getJson<Partial<SceneMapSettings>>(SETTINGS_PATH, {
       fallback: defaultSettings,
-      userId,
     }),
   );
 }
 
-async function saveSettings(settings: SceneMapSettings, userId?: string) {
-  await spindle.userStorage.setJson(SETTINGS_PATH, mergeSettings(settings), { indent: 2, userId });
+async function saveSettings(settings: SceneMapSettings) {
+  await spindle.storage.setJson(SETTINGS_PATH, mergeSettings(settings), { indent: 2 });
 }
 
 function getMessageTracker(message: ChatMessage | null | undefined): unknown | null {
@@ -152,10 +151,20 @@ async function buildState(userId?: string): Promise<SceneMapState> {
   };
 }
 
-async function pushState(userId?: string) {
+async function pushState(userId: string) {
   const state = await buildState(userId);
   spindle.sendToFrontend({ type: "state", state }, userId);
   spindle.updateMacroValue("scenemap", trackerToText(state.latest?.data ?? null));
+}
+
+async function refreshMacroValue() {
+  try {
+    const { messages } = await getActiveContext();
+    const latest = getLatestTrackerEntry(messages);
+    spindle.updateMacroValue("scenemap", trackerToText(latest?.data ?? null));
+  } catch (error) {
+    spindle.log.warn(`SceneMap macro refresh failed: ${(error as Error).message}`);
+  }
 }
 
 async function updateChatPreset(chatId: string, presetKey: string) {
@@ -188,7 +197,7 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
   if (activeGenerations.has(target.id)) {
     activeGenerations.get(target.id)?.abort();
     activeGenerations.delete(target.id);
-    await pushState(userId);
+    if (userId) await pushState(userId);
     spindle.toast.info("SceneMap generation cancelled.");
     return;
   }
@@ -207,7 +216,7 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
 
   const controller = new AbortController();
   activeGenerations.set(target.id, controller);
-  await pushState(userId);
+  if (userId) await pushState(userId);
 
   try {
     const result = await spindle.generate.quiet({
@@ -230,7 +239,8 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
     }
   } finally {
     activeGenerations.delete(target.id);
-    await pushState(userId);
+    if (userId) await pushState(userId);
+    else await refreshMacroValue();
   }
 }
 
@@ -244,7 +254,8 @@ async function editTracker(messageId: string, data: unknown, userId?: string) {
     metadata: withTrackerMetadata(message, data),
   });
   spindle.toast.success("Tracker saved.", { title: "SceneMap" });
-  await pushState(userId);
+  if (userId) await pushState(userId);
+  else await refreshMacroValue();
 }
 
 async function deleteTracker(messageId: string, userId?: string) {
@@ -264,7 +275,8 @@ async function deleteTracker(messageId: string, userId?: string) {
     metadata: withoutTrackerMetadata(message),
   });
   spindle.toast.success("Tracker deleted.", { title: "SceneMap" });
-  await pushState(userId);
+  if (userId) await pushState(userId);
+  else await refreshMacroValue();
 }
 
 spindle.registerMacro({
@@ -282,7 +294,7 @@ spindle.onFrontendMessage(async (payload: any, userId?: string) => {
         await pushState(userId);
         break;
       case "save_settings":
-        await saveSettings(payload.settings, userId);
+        await saveSettings(payload.settings);
         await pushState(userId);
         spindle.toast.success("Settings saved.", { title: "SceneMap" });
         break;
@@ -311,28 +323,32 @@ spindle.onFrontendMessage(async (payload: any, userId?: string) => {
 });
 
 spindle.on("CHAT_SWITCHED", () => {
-  void pushState();
+  void refreshMacroValue();
 });
 spindle.on("MESSAGE_EDITED", () => {
-  void pushState();
+  void refreshMacroValue();
 });
 spindle.on("MESSAGE_DELETED", () => {
-  void pushState();
+  void refreshMacroValue();
 });
 spindle.on("MESSAGE_SWIPED", () => {
-  void pushState();
+  void refreshMacroValue();
 });
 spindle.on("GENERATION_ENDED", (payload: any) => {
   if (payload?.error || !payload?.messageId) return;
   void (async () => {
-    const settings = await loadSettings();
-    if (!settings.autoGenerateAiTrackers) {
-      await pushState();
-      return;
+    try {
+      const settings = await loadSettings();
+      if (!settings.autoGenerateAiTrackers) {
+        await refreshMacroValue();
+        return;
+      }
+      await generateTracker(payload.messageId);
+    } catch (error) {
+      spindle.log.error(`SceneMap auto-generation failed: ${(error as Error).message}`);
     }
-    await generateTracker(payload.messageId);
   })();
 });
 
-void pushState();
+void refreshMacroValue();
 spindle.log.info("SceneMap loaded.");
