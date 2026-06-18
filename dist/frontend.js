@@ -659,25 +659,14 @@ function renderLayoutField(field, sectionIndex, fieldIndex, layout, options) {
   const childEditor = field.display === "character_cards" ? renderChildFieldEditor(field, option?.children ?? [], sectionIndex, fieldIndex) : "";
   return `
     <article class="scenemap-layout-field">
-      <div class="scenemap-layout-field-grid">
-        <label>
-          <span>Field</span>
-          <select data-layout-input="field-path" data-section="${sectionIndex}" data-field="${fieldIndex}">
-            ${selectOptions}
-          </select>
-        </label>
-        <label>
-          <span>Label</span>
-          <input data-layout-input="field-label" data-section="${sectionIndex}" data-field="${fieldIndex}" value="${escapeAttr(field.label ?? option?.label ?? "")}">
-        </label>
-        <label>
-          <span>Display</span>
-          <select data-layout-input="field-display" data-section="${sectionIndex}" data-field="${fieldIndex}">
-            ${renderDisplayOptions(field.display ?? option?.display ?? "text", !!option?.children?.length)}
-          </select>
-        </label>
-      </div>
-      <div class="scenemap-layout-actions">
+      <div class="scenemap-layout-field-row">
+        <select aria-label="Field" data-layout-input="field-path" data-section="${sectionIndex}" data-field="${fieldIndex}">
+          ${selectOptions}
+        </select>
+        <input aria-label="Label" data-layout-input="field-label" data-section="${sectionIndex}" data-field="${fieldIndex}" value="${escapeAttr(field.label ?? option?.label ?? "")}" placeholder="Label">
+        <select aria-label="Display" data-layout-input="field-display" data-section="${sectionIndex}" data-field="${fieldIndex}">
+          ${renderDisplayOptions(field.display ?? option?.display ?? "text", !!option?.children?.length)}
+        </select>
         ${iconButton("move-field-up", "Move up", "up", { section: sectionIndex, field: fieldIndex, disabled: fieldIndex === 0 })}
         ${iconButton("move-field-down", "Move down", "down", { section: sectionIndex, field: fieldIndex, disabled: fieldIndex >= layout.sections[sectionIndex].fields.length - 1 })}
         ${iconButton("remove-field", "Remove field", "trash", { section: sectionIndex, field: fieldIndex })}
@@ -1028,9 +1017,9 @@ var styles = `
 .scenemap-layout-section { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .scenemap-layout-section-header { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 10px; align-items: end; }
 .scenemap-layout-section label, .scenemap-layout-field label { display: flex; flex-direction: column; gap: 5px; color: var(--lumiverse-text-muted); font-size: 12px; }
-.scenemap-layout-fields { display: flex; flex-direction: column; gap: 8px; }
-.scenemap-layout-field { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-.scenemap-layout-field-grid { display: grid; grid-template-columns: minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(110px, .55fr); gap: 8px; align-items: end; }
+.scenemap-layout-fields { display: flex; flex-direction: column; gap: 7px; }
+.scenemap-layout-field { display: flex; flex-direction: column; gap: 8px; }
+.scenemap-layout-field-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto auto auto; gap: 6px; align-items: center; }
 .scenemap-layout-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .scenemap-layout-actions button, .scenemap-layout-child-row button { padding: 5px 8px; font-size: 12px; }
 .scenemap-layout-icon-btn { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
@@ -1049,7 +1038,7 @@ var styles = `
 .scenemap-float-root { width: 100%; height: 100%; }
 .scenemap-float-button { width: 100%; height: 100%; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
 @media (max-width: 760px) {
-  .scenemap-layout-section-header, .scenemap-layout-field-grid, .scenemap-layout-child-row { grid-template-columns: 1fr; }
+  .scenemap-layout-section-header, .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: 1fr; }
   .scenemap-layout-actions { justify-content: flex-start; }
   .scenemap-layout-intro { align-items: stretch; flex-direction: column; }
 }
