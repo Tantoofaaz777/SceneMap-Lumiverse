@@ -25,6 +25,7 @@ let state: SceneMapState = {
 
 let ctxRef: SpindleFrontendContext | null = null;
 let rootRef: HTMLElement | null = null;
+let settingsRootRef: HTMLElement | null = null;
 let tabHandle: ReturnType<SpindleFrontendContext["ui"]["registerDrawerTab"]> | null = null;
 
 const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
@@ -44,6 +45,8 @@ export function setup(ctx: SpindleFrontendContext) {
   tabHandle = tab;
   rootRef = tab.root;
   rootRef.className = "scenemap-lv";
+  settingsRootRef = ctx.ui.mount("settings_extensions");
+  settingsRootRef.className = "scenemap-settings-root";
   render();
 
   const action = ctx.ui.registerInputBarAction({
@@ -101,9 +104,18 @@ export function setup(ctx: SpindleFrontendContext) {
   rootRef.addEventListener("click", handleClick);
   rootRef.addEventListener("change", handleChange);
   rootRef.addEventListener("input", handleInput);
+  settingsRootRef.addEventListener("click", handleClick);
+  settingsRootRef.addEventListener("change", handleChange);
+  settingsRootRef.addEventListener("input", handleInput);
   requestState();
 
   return () => {
+    rootRef?.removeEventListener("click", handleClick);
+    rootRef?.removeEventListener("change", handleChange);
+    rootRef?.removeEventListener("input", handleInput);
+    settingsRootRef?.removeEventListener("click", handleClick);
+    settingsRootRef?.removeEventListener("change", handleChange);
+    settingsRootRef?.removeEventListener("input", handleInput);
     offBackend();
     offAction();
     for (const off of offEvents) off();
@@ -114,6 +126,7 @@ export function setup(ctx: SpindleFrontendContext) {
     ctx.dom.cleanup();
     ctxRef = null;
     rootRef = null;
+    settingsRootRef = null;
     tabHandle = null;
   };
 }
@@ -127,6 +140,12 @@ function requestState() {
 }
 
 function render() {
+  renderDrawer();
+  renderSettings();
+  tabHandle?.setBadge(state.messagesBehind > 0 ? String(state.messagesBehind) : null);
+}
+
+function renderDrawer() {
   if (!rootRef) return;
   const settings = mergeSettings(state.settings);
   const latest = state.latest;
@@ -151,54 +170,62 @@ function render() {
       <section class="scenemap-card scenemap-board">
         ${latest ? renderTracker(latest.data, settings.displayLayout) : `<div class="scenemap-empty">No tracker found for this chat yet.</div>`}
       </section>
-
-      <details class="scenemap-card scenemap-settings" open>
-        <summary>Settings</summary>
-        <label>
-          <span>Connection</span>
-          <select data-setting="connectionId">
-            <option value="">Default active connection</option>
-            ${state.connections
-              .map((conn) => `<option value="${escapeAttr(conn.id)}" ${settings.connectionId === conn.id ? "selected" : ""}>${escapeHtml(conn.name)} (${escapeHtml(conn.model || conn.provider)})${conn.is_default ? " - default" : ""}</option>`)
-              .join("")}
-          </select>
-        </label>
-        <label class="scenemap-check">
-          <input type="checkbox" data-setting="autoGenerateAiTrackers" ${settings.autoGenerateAiTrackers ? "checked" : ""}>
-          <span>Auto-generate after assistant replies</span>
-        </label>
-        <label>
-          <span>Max response tokens</span>
-          <input type="number" min="1" step="1" data-setting="maxResponseTokens" value="${settings.maxResponseTokens}">
-        </label>
-        <label>
-          <span>Include last messages</span>
-          <select data-setting="includeLastXMessages">
-            <option value="0" ${settings.includeLastXMessages === 0 ? "selected" : ""}>All messages up to target</option>
-            ${Array.from({ length: 20 }, (_, i) => i + 1)
-              .map((count) => `<option value="${count}" ${settings.includeLastXMessages === count ? "selected" : ""}>Last ${count}</option>`)
-              .join("")}
-          </select>
-        </label>
-        <label>
-          <span>Global preset</span>
-          <select data-setting="schemaPreset">
-            ${Object.entries(settings.schemaPresets)
-              .map(([key, preset]) => `<option value="${escapeAttr(key)}" ${settings.schemaPreset === key ? "selected" : ""}>${escapeHtml(preset.name)}</option>`)
-              .join("")}
-          </select>
-        </label>
-        <div class="scenemap-row">
-          <button data-action="edit-schema">Schema</button>
-          <button data-action="edit-prompt">Prompt</button>
-          <button data-action="edit-layout">Layout</button>
-          <button data-action="reset-defaults">Reset</button>
-        </div>
-        <button class="scenemap-primary" data-action="save-settings">Save settings</button>
-      </details>
     </div>
   `;
-  tabHandle?.setBadge(state.messagesBehind > 0 ? String(state.messagesBehind) : null);
+}
+
+function renderSettings() {
+  if (!settingsRootRef) return;
+  const settings = mergeSettings(state.settings);
+  settingsRootRef.innerHTML = `
+    <section class="scenemap-card scenemap-settings">
+      <div class="scenemap-settings-heading">
+        <h3>SceneMap</h3>
+        <p>${statusText()}</p>
+      </div>
+      <label>
+        <span>Connection</span>
+        <select data-setting="connectionId">
+          <option value="">Default active connection</option>
+          ${state.connections
+            .map((conn) => `<option value="${escapeAttr(conn.id)}" ${settings.connectionId === conn.id ? "selected" : ""}>${escapeHtml(conn.name)} (${escapeHtml(conn.model || conn.provider)})${conn.is_default ? " - default" : ""}</option>`)
+            .join("")}
+        </select>
+      </label>
+      <label class="scenemap-check">
+        <input type="checkbox" data-setting="autoGenerateAiTrackers" ${settings.autoGenerateAiTrackers ? "checked" : ""}>
+        <span>Auto-generate after assistant replies</span>
+      </label>
+      <label>
+        <span>Max response tokens</span>
+        <input type="number" min="1" step="1" data-setting="maxResponseTokens" value="${settings.maxResponseTokens}">
+      </label>
+      <label>
+        <span>Include last messages</span>
+        <select data-setting="includeLastXMessages">
+          <option value="0" ${settings.includeLastXMessages === 0 ? "selected" : ""}>All messages up to target</option>
+          ${Array.from({ length: 20 }, (_, i) => i + 1)
+            .map((count) => `<option value="${count}" ${settings.includeLastXMessages === count ? "selected" : ""}>Last ${count}</option>`)
+            .join("")}
+        </select>
+      </label>
+      <label>
+        <span>Global preset</span>
+        <select data-setting="schemaPreset">
+          ${Object.entries(settings.schemaPresets)
+            .map(([key, preset]) => `<option value="${escapeAttr(key)}" ${settings.schemaPreset === key ? "selected" : ""}>${escapeHtml(preset.name)}</option>`)
+            .join("")}
+        </select>
+      </label>
+      <div class="scenemap-row">
+        <button data-action="edit-schema">Schema</button>
+        <button data-action="edit-prompt">Prompt</button>
+        <button data-action="edit-layout">Layout</button>
+        <button data-action="reset-defaults">Reset</button>
+      </div>
+      <button class="scenemap-primary" data-action="save-settings">Save settings</button>
+    </section>
+  `;
 }
 
 function statusText(): string {
@@ -436,6 +463,7 @@ function refreshSvg(): string {
 
 const styles = `
 .scenemap-lv { height: 100%; color: var(--lumiverse-text); }
+.scenemap-settings-root { color: var(--lumiverse-text); }
 .scenemap-shell { display: flex; flex-direction: column; gap: 12px; padding: 14px; min-height: 100%; box-sizing: border-box; }
 .scenemap-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .scenemap-header h2 { margin: 0; font-size: 18px; font-weight: 700; }
@@ -457,7 +485,9 @@ const styles = `
 .scenemap-character-grid { display: flex; flex-direction: column; gap: 10px; }
 .scenemap-character { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); border-radius: 8px; padding: 10px; }
 .scenemap-character h4 { margin: 0 0 10px; font-size: 13px; }
-.scenemap-settings summary { cursor: pointer; font-weight: 700; margin-bottom: 10px; }
+.scenemap-settings-heading { margin-bottom: 12px; }
+.scenemap-settings-heading h3 { margin: 0; font-size: 15px; font-weight: 800; }
+.scenemap-settings-heading p { margin: 4px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; }
 .scenemap-settings label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
 .scenemap-settings .scenemap-check { flex-direction: row; align-items: center; color: var(--lumiverse-text); }
 .scenemap-settings input:not([type="checkbox"]), .scenemap-settings select, .scenemap-editor textarea {
@@ -466,10 +496,10 @@ const styles = `
 }
 .scenemap-editor { display: flex; flex-direction: column; gap: 10px; }
 .scenemap-editor textarea { min-height: min(58vh, 520px); resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
-.scenemap-lv button, .scenemap-editor button, .scenemap-float-button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
-.scenemap-lv button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-float-button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
-.scenemap-lv button:disabled, .scenemap-editor button:disabled, .scenemap-float-button:disabled { opacity: 0.45; cursor: default; }
-.scenemap-primary { background: var(--lumiverse-accent); color: var(--lumiverse-accent-fg); border-color: transparent; }
+.scenemap-lv button, .scenemap-settings-root button, .scenemap-editor button, .scenemap-float-button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
+.scenemap-lv button:hover:not(:disabled), .scenemap-settings-root button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-float-button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
+.scenemap-lv button:disabled, .scenemap-settings-root button:disabled, .scenemap-editor button:disabled, .scenemap-float-button:disabled { opacity: 0.45; cursor: default; }
+.scenemap-lv .scenemap-primary, .scenemap-settings-root .scenemap-primary, .scenemap-editor .scenemap-primary { background: var(--lumiverse-accent); color: var(--lumiverse-accent-fg); border-color: transparent; }
 .scenemap-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: 8px; padding: 10px; font-size: 12px; }
 .scenemap-float-root { width: 100%; height: 100%; }
