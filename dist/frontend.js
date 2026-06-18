@@ -478,10 +478,15 @@ function editLayout() {
   if (!ctx)
     return;
   const modal = ctx.ui.showModal({ title: "SceneMap Layout", width: 860, maxHeight: 760 });
-  const draw = () => {
+  const draw = (preserveScroll = true) => {
+    const scroller = modal.root.querySelector(".scenemap-layout-sections");
+    const scrollTop = preserveScroll ? scroller?.scrollTop ?? 0 : 0;
     modal.root.innerHTML = renderLayoutEditor(workingLayout, fieldOptions);
+    const nextScroller = modal.root.querySelector(".scenemap-layout-sections");
+    if (nextScroller)
+      nextScroller.scrollTop = scrollTop;
   };
-  draw();
+  draw(false);
   modal.root.addEventListener("input", (event) => {
     const target = event.target;
     const sectionIndex = readIndex(target.dataset.section);
@@ -1028,7 +1033,8 @@ var styles = `
 .scenemap-layout-field-grid { display: grid; grid-template-columns: minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(110px, .55fr); gap: 8px; align-items: end; }
 .scenemap-layout-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .scenemap-layout-actions button, .scenemap-layout-child-row button { padding: 5px 8px; font-size: 12px; }
-.scenemap-layout-icon-btn { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.scenemap-layout-icon-btn { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.scenemap-layout-icon-btn svg { width: 18px; height: 18px; }
 .scenemap-layout-add-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .scenemap-layout-child-box { border-top: 1px solid var(--lumiverse-border); padding-top: 9px; display: flex; flex-direction: column; gap: 7px; }
 .scenemap-layout-child-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
