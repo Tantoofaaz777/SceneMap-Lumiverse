@@ -11,6 +11,7 @@ import {
   type SceneMapState,
   type TrackerBoardDisplayLayout,
   type TrackerBoardField,
+  type TrackerFieldDisplay,
 } from "./shared";
 
 let state: SceneMapState = {
@@ -305,12 +306,361 @@ function editPrompt() {
 
 function editLayout() {
   const settings = mergeSettings(state.settings);
-  openJsonEditor("SceneMap Display Layout", settings.displayLayout, (data) => {
-    const layout = data as TrackerBoardDisplayLayout;
-    if (!Array.isArray(layout.sections)) throw new Error("Layout must contain a sections array.");
-    state = { ...state, settings: { ...settings, displayLayout: layout } };
-    render();
+  const preset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  const fieldOptions = extractSchemaFieldOptions(preset.value);
+  const workingLayout = cloneLayout(settings.displayLayout);
+  const ctx = ctxRef;
+  if (!ctx) return;
+
+  const modal = ctx.ui.showModal({ title: "SceneMap Layout", width: 860, maxHeight: 760 });
+  const draw = () => {
+    modal.root.innerHTML = renderLayoutEditor(workingLayout, fieldOptions);
+  };
+  draw();
+  modal.root.addEventListener("input", (event) => {
+    const target = event.target as HTMLInputElement;
+    const sectionIndex = readIndex(target.dataset.section);
+    const fieldIndex = readIndex(target.dataset.field);
+    const childIndex = readIndex(target.dataset.child);
+    if (target.dataset.layoutInput === "section-title" && sectionIndex !== null) {
+      workingLayout.sections[sectionIndex].title = target.value;
+    }
+    if (target.dataset.layoutInput === "field-label" && sectionIndex !== null && fieldIndex !== null) {
+      workingLayout.sections[sectionIndex].fields[fieldIndex].label = target.value;
+    }
+    if (target.dataset.layoutInput === "child-label" && sectionIndex !== null && fieldIndex !== null && childIndex !== null) {
+      const field = workingLayout.sections[sectionIndex].fields[fieldIndex];
+      if (field.fields?.[childIndex]) field.fields[childIndex].label = target.value;
+    }
   });
+  modal.root.addEventListener("change", (event) => {
+    const target = event.target as HTMLSelectElement;
+    const sectionIndex = readIndex(target.dataset.section);
+    const fieldIndex = readIndex(target.dataset.field);
+    const childIndex = readIndex(target.dataset.child);
+    if (sectionIndex === null || fieldIndex === null) return;
+    const field = workingLayout.sections[sectionIndex].fields[fieldIndex];
+    if (target.dataset.layoutInput === "field-path") {
+      const option = findFieldOption(fieldOptions, target.value);
+      field.path = target.value;
+      field.label = option?.label ?? humanizeTrackerKey(target.value.split(".").pop() || target.value);
+      field.display = option?.display ?? "text";
+      field.fields = option?.children?.slice(0, 4).map((child) => ({
+        path: child.path,
+        label: child.label,
+        display: child.display === "character_cards" ? "text" : child.display,
+      }));
+      draw();
+    }
+    if (target.dataset.layoutInput === "field-display") {
+      field.display = target.value as TrackerFieldDisplay;
+      draw();
+    }
+    if (target.dataset.layoutInput === "child-path" && childIndex !== null) {
+      const parentOption = findFieldOption(fieldOptions, field.path);
+      const option = parentOption?.children?.find((child) => child.path === target.value);
+      if (field.fields?.[childIndex]) {
+        field.fields[childIndex].path = target.value;
+        field.fields[childIndex].label = option?.label ?? humanizeTrackerKey(target.value.split(".").pop() || target.value);
+        field.fields[childIndex].display = option?.display === "character_cards" ? "text" : option?.display ?? "text";
+      }
+      draw();
+    }
+    if (target.dataset.layoutInput === "child-display" && childIndex !== null && field.fields?.[childIndex]) {
+      field.fields[childIndex].display = target.value as TrackerFieldDisplay;
+      draw();
+    }
+  });
+  modal.root.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLElement>("[data-layout-action]");
+    if (!button) return;
+    const sectionIndex = readIndex(button.dataset.section);
+    const fieldIndex = readIndex(button.dataset.field);
+    const childIndex = readIndex(button.dataset.child);
+    const action = button.dataset.layoutAction;
+    try {
+      if (action === "add-section") workingLayout.sections.push({ title: "New Section", fields: [] });
+      if (action === "remove-section" && sectionIndex !== null) workingLayout.sections.splice(sectionIndex, 1);
+      if (action === "move-section-up" && sectionIndex !== null) moveItem(workingLayout.sections, sectionIndex, sectionIndex - 1);
+      if (action === "move-section-down" && sectionIndex !== null) moveItem(workingLayout.sections, sectionIndex, sectionIndex + 1);
+      if (action === "add-field" && sectionIndex !== null) {
+        workingLayout.sections[sectionIndex].fields.push(createFieldFromOption(fieldOptions[0]));
+      }
+      if (action === "remove-field" && sectionIndex !== null && fieldIndex !== null) {
+        workingLayout.sections[sectionIndex].fields.splice(fieldIndex, 1);
+      }
+      if (action === "move-field-up" && sectionIndex !== null && fieldIndex !== null) {
+        moveItem(workingLayout.sections[sectionIndex].fields, fieldIndex, fieldIndex - 1);
+      }
+      if (action === "move-field-down" && sectionIndex !== null && fieldIndex !== null) {
+        moveItem(workingLayout.sections[sectionIndex].fields, fieldIndex, fieldIndex + 1);
+      }
+      if (action === "add-child" && sectionIndex !== null && fieldIndex !== null) {
+        const field = workingLayout.sections[sectionIndex].fields[fieldIndex];
+        const parentOption = findFieldOption(fieldOptions, field.path);
+        field.fields = field.fields ?? [];
+        field.fields.push(createFieldFromOption(parentOption?.children?.[0]));
+      }
+      if (action === "remove-child" && sectionIndex !== null && fieldIndex !== null && childIndex !== null) {
+        workingLayout.sections[sectionIndex].fields[fieldIndex].fields?.splice(childIndex, 1);
+      }
+      if (action === "move-child-up" && sectionIndex !== null && fieldIndex !== null && childIndex !== null) {
+        moveItem(workingLayout.sections[sectionIndex].fields[fieldIndex].fields ?? [], childIndex, childIndex - 1);
+      }
+      if (action === "move-child-down" && sectionIndex !== null && fieldIndex !== null && childIndex !== null) {
+        moveItem(workingLayout.sections[sectionIndex].fields[fieldIndex].fields ?? [], childIndex, childIndex + 1);
+      }
+      if (action === "reset-layout") {
+        workingLayout.sections = cloneLayout(DEFAULT_DISPLAY_LAYOUT).sections;
+      }
+      if (action === "cancel") {
+        modal.dismiss();
+        return;
+      }
+      if (action === "save-layout") {
+        validateLayout(workingLayout);
+        state = { ...state, settings: { ...settings, displayLayout: cloneLayout(workingLayout) } };
+        render();
+        modal.dismiss();
+        return;
+      }
+      draw();
+    } catch (err) {
+      const error = modal.root.querySelector(".scenemap-inline-error") as HTMLElement | null;
+      if (error) {
+        error.hidden = false;
+        error.textContent = (err as Error).message;
+      }
+    }
+  });
+}
+
+type SchemaFieldOption = {
+  path: string;
+  label: string;
+  display: TrackerFieldDisplay;
+  children?: SchemaFieldOption[];
+};
+
+function renderLayoutEditor(layout: TrackerBoardDisplayLayout, options: SchemaFieldOption[]): string {
+  return `
+    <div class="scenemap-layout-editor">
+      <div class="scenemap-layout-intro">
+        <button type="button" data-layout-action="add-section">Add section</button>
+      </div>
+      <div class="scenemap-layout-sections">
+        ${layout.sections.map((section, sectionIndex) => renderLayoutSection(section, sectionIndex, layout.sections.length, options)).join("")}
+      </div>
+      <div class="scenemap-modal-actions">
+        <button type="button" data-layout-action="reset-layout">Reset default</button>
+        <span class="scenemap-modal-spacer"></span>
+        <button type="button" data-layout-action="cancel">Cancel</button>
+        <button type="button" class="scenemap-primary" data-layout-action="save-layout">Save layout</button>
+      </div>
+      <div class="scenemap-inline-error" hidden></div>
+    </div>
+  `;
+}
+
+function renderLayoutSection(section: TrackerBoardDisplayLayout["sections"][number], sectionIndex: number, sectionCount: number, options: SchemaFieldOption[]): string {
+  return `
+    <section class="scenemap-layout-section">
+      <header class="scenemap-layout-section-header">
+        <label>
+          <span>Section name</span>
+          <input data-layout-input="section-title" data-section="${sectionIndex}" value="${escapeAttr(section.title)}">
+        </label>
+        <div class="scenemap-layout-actions">
+          <button type="button" title="Move up" data-layout-action="move-section-up" data-section="${sectionIndex}" ${sectionIndex === 0 ? "disabled" : ""}>Up</button>
+          <button type="button" title="Move down" data-layout-action="move-section-down" data-section="${sectionIndex}" ${sectionIndex >= sectionCount - 1 ? "disabled" : ""}>Down</button>
+          <button type="button" data-layout-action="remove-section" data-section="${sectionIndex}">Remove</button>
+        </div>
+      </header>
+      <div class="scenemap-layout-fields">
+        ${section.fields.map((field, fieldIndex) => renderLayoutField(field, sectionIndex, fieldIndex, section.fields.length, options)).join("")}
+      </div>
+      <button type="button" data-layout-action="add-field" data-section="${sectionIndex}" ${options.length === 0 ? "disabled" : ""}>Add field</button>
+    </section>
+  `;
+}
+
+function renderLayoutField(field: TrackerBoardField, sectionIndex: number, fieldIndex: number, fieldCount: number, options: SchemaFieldOption[]): string {
+  const option = findFieldOption(options, field.path);
+  const selectOptions = ensureOption(options, field).map((item) => `<option value="${escapeAttr(item.path)}" ${item.path === field.path ? "selected" : ""}>${escapeHtml(item.label)} (${escapeHtml(item.path)})</option>`).join("");
+  const childEditor = field.display === "character_cards"
+    ? renderChildFieldEditor(field, option?.children ?? [], sectionIndex, fieldIndex)
+    : "";
+  return `
+    <article class="scenemap-layout-field">
+      <div class="scenemap-layout-field-grid">
+        <label>
+          <span>Field</span>
+          <select data-layout-input="field-path" data-section="${sectionIndex}" data-field="${fieldIndex}">
+            ${selectOptions}
+          </select>
+        </label>
+        <label>
+          <span>Label</span>
+          <input data-layout-input="field-label" data-section="${sectionIndex}" data-field="${fieldIndex}" value="${escapeAttr(field.label ?? option?.label ?? "")}">
+        </label>
+        <label>
+          <span>Display</span>
+          <select data-layout-input="field-display" data-section="${sectionIndex}" data-field="${fieldIndex}">
+            ${renderDisplayOptions(field.display ?? option?.display ?? "text", !!option?.children?.length)}
+          </select>
+        </label>
+      </div>
+      <div class="scenemap-layout-actions">
+        <button type="button" data-layout-action="move-field-up" data-section="${sectionIndex}" data-field="${fieldIndex}" ${fieldIndex === 0 ? "disabled" : ""}>Up</button>
+        <button type="button" data-layout-action="move-field-down" data-section="${sectionIndex}" data-field="${fieldIndex}" ${fieldIndex >= fieldCount - 1 ? "disabled" : ""}>Down</button>
+        <button type="button" data-layout-action="remove-field" data-section="${sectionIndex}" data-field="${fieldIndex}">Remove</button>
+      </div>
+      ${childEditor}
+    </article>
+  `;
+}
+
+function renderChildFieldEditor(field: TrackerBoardField, options: SchemaFieldOption[], sectionIndex: number, fieldIndex: number): string {
+  const children = field.fields ?? [];
+  return `
+    <div class="scenemap-layout-child-box">
+      <div class="scenemap-layout-child-header">
+        <strong>Card fields</strong>
+        <button type="button" data-layout-action="add-child" data-section="${sectionIndex}" data-field="${fieldIndex}" ${options.length === 0 ? "disabled" : ""}>Add card field</button>
+      </div>
+      ${children.map((child, childIndex) => renderChildField(child, childIndex, children.length, options, sectionIndex, fieldIndex)).join("")}
+    </div>
+  `;
+}
+
+function renderChildField(child: TrackerBoardField, childIndex: number, childCount: number, options: SchemaFieldOption[], sectionIndex: number, fieldIndex: number): string {
+  const selectOptions = ensureOption(options, child).map((item) => `<option value="${escapeAttr(item.path)}" ${item.path === child.path ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("");
+  return `
+    <div class="scenemap-layout-child-row">
+      <select data-layout-input="child-path" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}">
+        ${selectOptions}
+      </select>
+      <input data-layout-input="child-label" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}" value="${escapeAttr(child.label ?? "")}" placeholder="Label">
+      <select data-layout-input="child-display" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}">
+        ${renderDisplayOptions(child.display ?? "text", false)}
+      </select>
+      <button type="button" data-layout-action="move-child-up" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}" ${childIndex === 0 ? "disabled" : ""}>Up</button>
+      <button type="button" data-layout-action="move-child-down" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}" ${childIndex >= childCount - 1 ? "disabled" : ""}>Down</button>
+      <button type="button" data-layout-action="remove-child" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}">Remove</button>
+    </div>
+  `;
+}
+
+function renderDisplayOptions(selected: TrackerFieldDisplay, allowCards: boolean): string {
+  const displays: Array<{ value: TrackerFieldDisplay; label: string }> = [
+    { value: "text", label: "Text" },
+    { value: "subtle", label: "Subtle" },
+    { value: "mono", label: "Mono" },
+    { value: "chips", label: "Chips" },
+  ];
+  if (allowCards) displays.push({ value: "character_cards", label: "Cards" });
+  return displays.map((display) => `<option value="${display.value}" ${display.value === selected ? "selected" : ""}>${display.label}</option>`).join("");
+}
+
+function extractSchemaFieldOptions(schema: Record<string, unknown>): SchemaFieldOption[] {
+  const properties = getSchemaProperties(schema);
+  return Object.entries(properties).flatMap(([key, value]) => schemaToOptions(value, key, key));
+}
+
+function schemaToOptions(schema: unknown, path: string, labelSeed: string): SchemaFieldOption[] {
+  const record = getRecord(schema);
+  const type = record.type;
+  if (type === "array") {
+    const items = getRecord(record.items);
+    if (getSchemaProperties(items)) {
+      return [{
+        path,
+        label: schemaLabel(record, labelSeed),
+        display: "character_cards",
+        children: Object.entries(getSchemaProperties(items)).flatMap(([key, value]) => schemaToOptions(value, key, key)),
+      }];
+    }
+    return [{ path, label: schemaLabel(record, labelSeed), display: "chips" }];
+  }
+  const properties = getSchemaProperties(record);
+  if (properties) {
+    return Object.entries(properties).flatMap(([key, value]) => schemaToOptions(value, `${path}.${key}`, key));
+  }
+  return [{ path, label: schemaLabel(record, labelSeed), display: defaultDisplayForSchema(record, path) }];
+}
+
+function getSchemaProperties(schema: unknown): Record<string, unknown> | null {
+  const record = getRecord(schema);
+  return record.properties && typeof record.properties === "object" && !Array.isArray(record.properties)
+    ? record.properties as Record<string, unknown>
+    : null;
+}
+
+function schemaLabel(schema: Record<string, unknown>, fallback: string): string {
+  return typeof schema.title === "string" && schema.title.trim()
+    ? schema.title.trim()
+    : humanizeTrackerKey(fallback.split(".").pop() || fallback);
+}
+
+function defaultDisplayForSchema(schema: Record<string, unknown>, path: string): TrackerFieldDisplay {
+  if (schema.type === "array") return "chips";
+  if (/posture|interaction|notes?|description/i.test(path)) return "mono";
+  if (/tone|time|state|hair|makeup/i.test(path)) return "subtle";
+  return "text";
+}
+
+function findFieldOption(options: SchemaFieldOption[], path: string): SchemaFieldOption | undefined {
+  return options.find((option) => option.path === path);
+}
+
+function ensureOption(options: SchemaFieldOption[], field: TrackerBoardField): SchemaFieldOption[] {
+  if (options.some((option) => option.path === field.path)) return options;
+  return [{ path: field.path, label: field.label || humanizeTrackerKey(field.path.split(".").pop() || field.path), display: field.display || "text", children: field.fields as SchemaFieldOption[] | undefined }, ...options];
+}
+
+function createFieldFromOption(option: SchemaFieldOption | undefined): TrackerBoardField {
+  if (!option) return { path: "", label: "", display: "text" };
+  return {
+    path: option.path,
+    label: option.label,
+    display: option.display,
+    fields: option.display === "character_cards"
+      ? option.children?.slice(0, 4).map((child) => ({ path: child.path, label: child.label, display: child.display === "character_cards" ? "text" : child.display }))
+      : undefined,
+  };
+}
+
+function cloneLayout(layout: TrackerBoardDisplayLayout): TrackerBoardDisplayLayout {
+  return JSON.parse(JSON.stringify(layout)) as TrackerBoardDisplayLayout;
+}
+
+function moveItem<T>(items: T[], from: number, to: number) {
+  if (to < 0 || to >= items.length || from === to) return;
+  const [item] = items.splice(from, 1);
+  items.splice(to, 0, item);
+}
+
+function readIndex(value: string | undefined): number | null {
+  if (value === undefined) return null;
+  const index = Number(value);
+  return Number.isInteger(index) && index >= 0 ? index : null;
+}
+
+function validateLayout(layout: TrackerBoardDisplayLayout) {
+  if (!layout.sections.length) throw new Error("Add at least one section.");
+  for (const section of layout.sections) {
+    section.title = section.title.trim() || "Untitled";
+    section.fields = section.fields.filter((field) => field.path.trim());
+    for (const field of section.fields) {
+      field.path = field.path.trim();
+      field.label = field.label?.trim() || undefined;
+      field.fields = field.fields?.filter((child) => child.path.trim()).map((child) => ({
+        ...child,
+        path: child.path.trim(),
+        label: child.label?.trim() || undefined,
+      }));
+    }
+  }
 }
 
 function openJsonEditor(title: string, value: unknown, onSave: (data: unknown) => void) {
@@ -469,6 +819,7 @@ const styles = `
 .scenemap-header h2 { margin: 0; font-size: 18px; font-weight: 700; }
 .scenemap-header p { margin: 3px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.scenemap-modal-spacer { flex: 1 1 auto; }
 .scenemap-card { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
 .scenemap-board { overflow: auto; }
 .scenemap-empty { color: var(--lumiverse-text-muted); font-size: 13px; text-align: center; padding: 20px 4px; }
@@ -490,18 +841,38 @@ const styles = `
 .scenemap-settings-heading p { margin: 4px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; }
 .scenemap-settings label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
 .scenemap-settings .scenemap-check { flex-direction: row; align-items: center; color: var(--lumiverse-text); }
-.scenemap-settings input:not([type="checkbox"]), .scenemap-settings select, .scenemap-editor textarea {
+.scenemap-settings input:not([type="checkbox"]), .scenemap-settings select, .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-layout-editor select {
   width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: 6px;
   background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 7px 9px; font: inherit;
 }
 .scenemap-editor { display: flex; flex-direction: column; gap: 10px; }
 .scenemap-editor textarea { min-height: min(58vh, 520px); resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
-.scenemap-lv button, .scenemap-settings-root button, .scenemap-editor button, .scenemap-float-button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
-.scenemap-lv button:hover:not(:disabled), .scenemap-settings-root button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-float-button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
-.scenemap-lv button:disabled, .scenemap-settings-root button:disabled, .scenemap-editor button:disabled, .scenemap-float-button:disabled { opacity: 0.45; cursor: default; }
-.scenemap-lv .scenemap-primary, .scenemap-settings-root .scenemap-primary, .scenemap-editor .scenemap-primary { background: var(--lumiverse-accent); color: var(--lumiverse-accent-fg); border-color: transparent; }
+.scenemap-layout-editor { display: flex; flex-direction: column; gap: 12px; color: var(--lumiverse-text); }
+.scenemap-layout-intro { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.scenemap-layout-sections { display: flex; flex-direction: column; gap: 12px; max-height: min(58vh, 520px); overflow: auto; padding-right: 4px; }
+.scenemap-layout-section { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.scenemap-layout-section-header { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 10px; align-items: end; }
+.scenemap-layout-section label, .scenemap-layout-field label { display: flex; flex-direction: column; gap: 5px; color: var(--lumiverse-text-muted); font-size: 12px; }
+.scenemap-layout-fields { display: flex; flex-direction: column; gap: 8px; }
+.scenemap-layout-field { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.scenemap-layout-field-grid { display: grid; grid-template-columns: minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(110px, .55fr); gap: 8px; align-items: end; }
+.scenemap-layout-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.scenemap-layout-actions button, .scenemap-layout-child-row button { padding: 5px 8px; font-size: 12px; }
+.scenemap-layout-child-box { border-top: 1px solid var(--lumiverse-border); padding-top: 9px; display: flex; flex-direction: column; gap: 7px; }
+.scenemap-layout-child-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.scenemap-layout-child-header strong { font-size: 12px; color: var(--lumiverse-text-muted); text-transform: uppercase; }
+.scenemap-layout-child-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto auto auto; gap: 6px; align-items: center; }
+.scenemap-lv button, .scenemap-settings-root button, .scenemap-editor button, .scenemap-layout-editor button, .scenemap-float-button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
+.scenemap-lv button:hover:not(:disabled), .scenemap-settings-root button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-layout-editor button:hover:not(:disabled), .scenemap-float-button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
+.scenemap-lv button:disabled, .scenemap-settings-root button:disabled, .scenemap-editor button:disabled, .scenemap-layout-editor button:disabled, .scenemap-float-button:disabled { opacity: 0.45; cursor: default; }
+.scenemap-lv .scenemap-primary, .scenemap-settings-root .scenemap-primary, .scenemap-editor .scenemap-primary, .scenemap-layout-editor .scenemap-primary { background: var(--lumiverse-accent); color: var(--lumiverse-accent-fg); border-color: transparent; }
 .scenemap-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: 8px; padding: 10px; font-size: 12px; }
 .scenemap-float-root { width: 100%; height: 100%; }
 .scenemap-float-button { width: 100%; height: 100%; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
+@media (max-width: 760px) {
+  .scenemap-layout-section-header, .scenemap-layout-field-grid, .scenemap-layout-child-row { grid-template-columns: 1fr; }
+  .scenemap-layout-actions { justify-content: flex-start; }
+  .scenemap-layout-intro { align-items: stretch; flex-direction: column; }
+}
 `;
