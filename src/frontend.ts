@@ -219,6 +219,10 @@ function renderSettings() {
         </select>
       </label>
       <div class="scenemap-row">
+        <button data-action="create-preset">${layoutIcon("plus")} New preset</button>
+        <button data-action="rename-preset">Rename preset</button>
+      </div>
+      <div class="scenemap-row">
         <button data-action="edit-schema">Schema</button>
         <button data-action="edit-prompt">Prompt</button>
         <button data-action="edit-layout">Layout</button>
@@ -248,6 +252,8 @@ function handleClick(event: Event) {
     send({ type: "edit_tracker", messageId: state.latest?.messageId, data });
   });
   if (action === "delete" && state.latest) send({ type: "delete_tracker", messageId: state.latest.messageId });
+  if (action === "create-preset") createPreset();
+  if (action === "rename-preset") renamePreset();
   if (action === "edit-schema") editActiveSchema();
   if (action === "edit-prompt") editPrompt();
   if (action === "edit-layout") editLayout();
@@ -284,6 +290,101 @@ function updateSettingFromControl(target: HTMLInputElement | HTMLSelectElement, 
     (settings as any)[key] = target.value;
   }
   state = { ...state, settings };
+}
+
+function createPreset() {
+  const settings = mergeSettings(state.settings);
+  const activePreset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  openNameEditor("New Preset", "", "Create preset", (name) => {
+    const key = uniquePresetKey(slugifyPresetName(name), settings.schemaPresets);
+    settings.schemaPresets[key] = {
+      name,
+      value: JSON.parse(JSON.stringify(activePreset.value)) as Record<string, unknown>,
+    };
+    state = { ...state, settings: { ...settings, schemaPreset: key } };
+    render();
+  });
+}
+
+function renamePreset() {
+  const settings = mergeSettings(state.settings);
+  const key = settings.schemaPreset;
+  const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
+  openNameEditor("Rename Preset", preset.name, "Rename preset", (name) => {
+    settings.schemaPresets[key] = { ...preset, name };
+    state = { ...state, settings };
+    render();
+  });
+}
+
+function openNameEditor(title: string, initialValue: string, submitLabel: string, onSave: (name: string) => void) {
+  const ctx = ctxRef;
+  if (!ctx) return;
+  const modal = ctx.ui.showModal({ title, width: 420, maxHeight: 260 });
+  modal.root.innerHTML = `
+    <div class="scenemap-name-editor">
+      <label>
+        <span>Name</span>
+        <input data-name-input value="${escapeAttr(initialValue)}" placeholder="Preset name">
+      </label>
+      <div class="scenemap-modal-actions">
+        <button data-modal-action="cancel">Cancel</button>
+        <button class="scenemap-primary" data-modal-action="save">${escapeHtml(submitLabel)}</button>
+      </div>
+      <div class="scenemap-inline-error" hidden></div>
+    </div>
+  `;
+  const input = modal.root.querySelector("[data-name-input]") as HTMLInputElement;
+  const error = modal.root.querySelector(".scenemap-inline-error") as HTMLElement;
+  input.focus();
+  input.select();
+  const save = () => {
+    const name = input.value.trim();
+    if (!name) throw new Error("Preset name is required.");
+    onSave(name);
+    modal.dismiss();
+  };
+  modal.root.addEventListener("keydown", (event) => {
+    if ((event as KeyboardEvent).key !== "Enter") return;
+    try {
+      save();
+    } catch (err) {
+      error.hidden = false;
+      error.textContent = (err as Error).message;
+    }
+  });
+  modal.root.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLElement>("[data-modal-action]");
+    if (!button) return;
+    if (button.dataset.modalAction === "cancel") {
+      modal.dismiss();
+      return;
+    }
+    try {
+      save();
+    } catch (err) {
+      error.hidden = false;
+      error.textContent = (err as Error).message;
+    }
+  });
+}
+
+function slugifyPresetName(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return slug || "preset";
+}
+
+function uniquePresetKey(base: string, presets: Record<string, unknown>): string {
+  let key = base;
+  let index = 2;
+  while (Object.prototype.hasOwnProperty.call(presets, key)) {
+    key = `${base}_${index}`;
+    index += 1;
+  }
+  return key;
 }
 
 function editActiveSchema() {
@@ -877,11 +978,13 @@ const styles = `
 .scenemap-settings-heading p { margin: 4px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; }
 .scenemap-settings label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
 .scenemap-settings .scenemap-check { flex-direction: row; align-items: center; color: var(--lumiverse-text); }
-.scenemap-settings input:not([type="checkbox"]), .scenemap-settings select, .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-layout-editor select {
+.scenemap-settings input:not([type="checkbox"]), .scenemap-settings select, .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-layout-editor select, .scenemap-name-editor input {
   width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: 6px;
   background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 7px 9px; font: inherit;
 }
 .scenemap-editor { display: flex; flex-direction: column; gap: 10px; }
+.scenemap-name-editor { display: flex; flex-direction: column; gap: 12px; color: var(--lumiverse-text); }
+.scenemap-name-editor label { display: flex; flex-direction: column; gap: 5px; color: var(--lumiverse-text-muted); font-size: 12px; }
 .scenemap-editor textarea { min-height: min(58vh, 520px); resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
 .scenemap-layout-editor { display: flex; flex-direction: column; gap: 12px; color: var(--lumiverse-text); }
 .scenemap-layout-intro { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
@@ -901,10 +1004,10 @@ const styles = `
 .scenemap-layout-child-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .scenemap-layout-child-header strong { font-size: 12px; color: var(--lumiverse-text-muted); text-transform: uppercase; }
 .scenemap-layout-child-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto auto auto; gap: 6px; align-items: center; }
-.scenemap-lv button, .scenemap-settings-root button, .scenemap-editor button, .scenemap-layout-editor button, .scenemap-float-button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
-.scenemap-lv button:hover:not(:disabled), .scenemap-settings-root button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-layout-editor button:hover:not(:disabled), .scenemap-float-button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
-.scenemap-lv button:disabled, .scenemap-settings-root button:disabled, .scenemap-editor button:disabled, .scenemap-layout-editor button:disabled, .scenemap-float-button:disabled { opacity: 0.45; cursor: default; }
-.scenemap-lv .scenemap-primary, .scenemap-settings-root .scenemap-primary, .scenemap-editor .scenemap-primary, .scenemap-layout-editor .scenemap-primary { background: var(--lumiverse-accent); color: var(--lumiverse-accent-fg); border-color: transparent; }
+.scenemap-lv button, .scenemap-settings-root button, .scenemap-editor button, .scenemap-layout-editor button, .scenemap-name-editor button, .scenemap-float-button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
+.scenemap-lv button:hover:not(:disabled), .scenemap-settings-root button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-layout-editor button:hover:not(:disabled), .scenemap-name-editor button:hover:not(:disabled), .scenemap-float-button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
+.scenemap-lv button:disabled, .scenemap-settings-root button:disabled, .scenemap-editor button:disabled, .scenemap-layout-editor button:disabled, .scenemap-name-editor button:disabled, .scenemap-float-button:disabled { opacity: 0.45; cursor: default; }
+.scenemap-lv .scenemap-primary, .scenemap-settings-root .scenemap-primary, .scenemap-editor .scenemap-primary, .scenemap-layout-editor .scenemap-primary, .scenemap-name-editor .scenemap-primary { background: var(--lumiverse-accent); color: var(--lumiverse-accent-fg); border-color: transparent; }
 .scenemap-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: 8px; padding: 10px; font-size: 12px; }
 .scenemap-float-root { width: 100%; height: 100%; }
