@@ -378,8 +378,8 @@ async function listConnections(userId) {
     return [];
   }
 }
-async function getActiveContext() {
-  const chat = await spindle.chats.getActive();
+async function getActiveContext(userId) {
+  const chat = await spindle.chats.getActive(userId);
   if (!chat)
     return { chat: null, messages: [] };
   const messages = await spindle.chat.getMessages(chat.id);
@@ -387,7 +387,7 @@ async function getActiveContext() {
 }
 async function buildState(userId) {
   const settings = await loadSettings(userId);
-  const { chat, messages } = await getActiveContext();
+  const { chat, messages } = await getActiveContext(userId);
   const latest = getLatestTrackerEntry(messages);
   return {
     settings,
@@ -405,16 +405,10 @@ async function pushState(userId) {
   spindle.updateMacroValue("scenemap", trackerToText(state.latest?.data ?? null));
 }
 async function refreshMacroValue() {
-  try {
-    const { messages } = await getActiveContext();
-    const latest = getLatestTrackerEntry(messages);
-    spindle.updateMacroValue("scenemap", trackerToText(latest?.data ?? null));
-  } catch (error) {
-    spindle.log.warn(`SceneMap macro refresh failed: ${error.message}`);
-  }
+  spindle.updateMacroValue("scenemap", "");
 }
-async function updateChatPreset(chatId, presetKey) {
-  const chat = await spindle.chats.get(chatId);
+async function updateChatPreset(chatId, presetKey, userId) {
+  const chat = await spindle.chats.get(chatId, userId);
   if (!chat)
     throw new Error("Active chat not found.");
   await spindle.chats.update(chatId, {
@@ -425,7 +419,7 @@ async function updateChatPreset(chatId, presetKey) {
         schemaPreset: presetKey
       }
     }
-  });
+  }, userId);
 }
 function getChatPresetKey(chat, settings) {
   const meta = chat?.metadata?.[CHAT_METADATA_KEY];
@@ -433,7 +427,9 @@ function getChatPresetKey(chat, settings) {
   return typeof key === "string" && settings.schemaPresets[key] ? key : settings.schemaPreset;
 }
 async function generateTracker(messageId, userId) {
-  const { chat, messages } = await getActiveContext();
+  if (!userId)
+    throw new Error("SceneMap needs a user context before generating a tracker.");
+  const { chat, messages } = await getActiveContext(userId);
   if (!chat)
     throw new Error("Open a chat before generating a SceneMap tracker.");
   const target = findTargetMessage(messages, messageId);
@@ -492,7 +488,9 @@ async function generateTracker(messageId, userId) {
   }
 }
 async function editTracker(messageId, data, userId) {
-  const { chat, messages } = await getActiveContext();
+  if (!userId)
+    throw new Error("SceneMap needs a user context before editing a tracker.");
+  const { chat, messages } = await getActiveContext(userId);
   if (!chat)
     throw new Error("Open a chat before editing a tracker.");
   const message = messages.find((item) => item.id === messageId);
@@ -510,7 +508,9 @@ async function editTracker(messageId, data, userId) {
     await refreshMacroValue();
 }
 async function deleteTracker(messageId, userId) {
-  const { chat, messages } = await getActiveContext();
+  if (!userId)
+    throw new Error("SceneMap needs a user context before deleting a tracker.");
+  const { chat, messages } = await getActiveContext(userId);
   if (!chat)
     throw new Error("Open a chat before deleting a tracker.");
   const message = messages.find((item) => item.id === messageId);
@@ -543,6 +543,8 @@ spindle.registerMacro({
 });
 spindle.onFrontendMessage(async (payload, userId) => {
   try {
+    if (!userId)
+      throw new Error("SceneMap did not receive a user context from Lumiverse.");
     switch (payload?.type) {
       case "get_state":
         await pushState(userId);
@@ -553,10 +555,10 @@ spindle.onFrontendMessage(async (payload, userId) => {
         spindle.toast.success("Settings saved.", { title: "SceneMap" });
         break;
       case "set_chat_preset": {
-        const { chat } = await getActiveContext();
+        const { chat } = await getActiveContext(userId);
         if (!chat)
           throw new Error("Open a chat before setting a chat preset.");
-        await updateChatPreset(chat.id, payload.presetKey);
+        await updateChatPreset(chat.id, payload.presetKey, userId);
         await pushState(userId);
         spindle.toast.success("Chat preset updated.", { title: "SceneMap" });
         break;
@@ -576,29 +578,19 @@ spindle.onFrontendMessage(async (payload, userId) => {
     spindle.toast.error(error.message, { title: "SceneMap", duration: 9000 });
   }
 });
-spindle.on("CHAT_SWITCHED", () => {
-  refreshMacroValue();
-});
-spindle.on("MESSAGE_EDITED", () => {
-  refreshMacroValue();
-});
-spindle.on("MESSAGE_DELETED", () => {
-  refreshMacroValue();
-});
-spindle.on("MESSAGE_SWIPED", () => {
-  refreshMacroValue();
-});
+spindle.on("CHAT_SWITCHED", () => {});
+spindle.on("MESSAGE_EDITED", () => {});
+spindle.on("MESSAGE_DELETED", () => {});
+spindle.on("MESSAGE_SWIPED", () => {});
 spindle.on("GENERATION_ENDED", (payload) => {
   if (payload?.error || !payload?.messageId)
     return;
   (async () => {
     try {
       const settings = await loadSettings();
-      if (!settings.autoGenerateAiTrackers) {
-        await refreshMacroValue();
+      if (!settings.autoGenerateAiTrackers)
         return;
-      }
-      await generateTracker(payload.messageId);
+      spindle.log.warn("SceneMap auto-generation skipped: generation event does not include a frontend user context.");
     } catch (error) {
       spindle.log.error(`SceneMap auto-generation failed: ${error.message}`);
     }

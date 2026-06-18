@@ -259,7 +259,13 @@ function setup(ctx) {
     ctx.events.on("MESSAGE_EDITED", () => requestState()),
     ctx.events.on("MESSAGE_DELETED", () => requestState()),
     ctx.events.on("MESSAGE_SWIPED", () => requestState()),
-    ctx.events.on("GENERATION_ENDED", () => requestState())
+    ctx.events.on("GENERATION_ENDED", (payload) => {
+      if (state.settings.autoGenerateAiTrackers && payload?.messageId && !payload?.error) {
+        send({ type: "generate_tracker", messageId: payload.messageId });
+        return;
+      }
+      requestState();
+    })
   ];
   rootRef.addEventListener("click", handleClick);
   rootRef.addEventListener("change", handleChange);
