@@ -1,0 +1,338 @@
+import {
+  CHAT_METADATA_KEY,
+  MESSAGE_METADATA_KEY,
+  SETTINGS_PATH,
+  defaultSettings,
+  mergeSettings,
+  parseModelJson,
+  renderPrompt,
+  schemaToExample,
+  trackerToText,
+  type SceneMapSettings,
+  type SceneMapState,
+  type TrackerEntry,
+} from "./shared";
+
+declare const spindle: import("lumiverse-spindle-types").SpindleAPI;
+
+type ChatMessage = {
+  id: string;
+  role: "system" | "user" | "assistant";
+  content: string;
+  metadata?: Record<string, unknown>;
+};
+
+type ConnectionSummary = {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  is_default?: boolean;
+};
+
+const activeGenerations = new Map<string, AbortController>();
+
+async function loadSettings(userId?: string): Promise<SceneMapSettings> {
+  return mergeSettings(
+    await spindle.userStorage.getJson<Partial<SceneMapSettings>>(SETTINGS_PATH, {
+      fallback: defaultSettings,
+      userId,
+    }),
+  );
+}
+
+async function saveSettings(settings: SceneMapSettings, userId?: string) {
+  await spindle.userStorage.setJson(SETTINGS_PATH, mergeSettings(settings), { indent: 2, userId });
+}
+
+function getMessageTracker(message: ChatMessage | null | undefined): unknown | null {
+  const data = message?.metadata?.[MESSAGE_METADATA_KEY];
+  if (!data || typeof data !== "object") return null;
+  return (data as Record<string, unknown>).value ?? null;
+}
+
+function withTrackerMetadata(message: ChatMessage, data: unknown): Record<string, unknown> {
+  return {
+    ...(message.metadata ?? {}),
+    [MESSAGE_METADATA_KEY]: {
+      value: data,
+      updatedAt: new Date().toISOString(),
+    },
+  };
+}
+
+function withoutTrackerMetadata(message: ChatMessage): Record<string, unknown> {
+  const next = { ...(message.metadata ?? {}) };
+  delete next[MESSAGE_METADATA_KEY];
+  return next;
+}
+
+function getLatestTrackerEntry(messages: ChatMessage[]): TrackerEntry | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role !== "assistant") continue;
+    const data = getMessageTracker(messages[i]);
+    if (data) return { messageId: messages[i].id, data };
+  }
+  return null;
+}
+
+function countAssistantMessagesAfter(messages: ChatMessage[], messageId: string): number {
+  const index = messages.findIndex((message) => message.id === messageId);
+  if (index === -1) return 0;
+  return messages.slice(index + 1).filter((message) => message.role === "assistant").length;
+}
+
+function findTargetMessage(messages: ChatMessage[], messageId?: string | null): ChatMessage | null {
+  if (messageId) return messages.find((message) => message.id === messageId) ?? null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === "assistant") return messages[i];
+  }
+  return null;
+}
+
+function getPreviousTrackerJson(messages: ChatMessage[], currentMessageId: string, skipCurrent: boolean): string {
+  let skippedCurrent = !skipCurrent;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    const tracker = getMessageTracker(message);
+    if (!tracker) continue;
+    if (!skippedCurrent && message.id === currentMessageId) {
+      skippedCurrent = true;
+      continue;
+    }
+    return JSON.stringify(tracker, null, 2);
+  }
+  return "{}";
+}
+
+function trimMessagesForPrompt(messages: ChatMessage[], targetId: string, includeLastXMessages: number) {
+  const targetIndex = messages.findIndex((message) => message.id === targetId);
+  const end = targetIndex === -1 ? messages.length : targetIndex + 1;
+  const start = includeLastXMessages > 0 ? Math.max(0, end - includeLastXMessages) : 0;
+  return messages.slice(start, end).map((message) => ({
+    role: message.role,
+    content: message.content,
+  }));
+}
+
+async function listConnections(userId?: string): Promise<ConnectionSummary[]> {
+  try {
+    const connections = await spindle.connections.list(userId);
+    return connections.map((conn: any) => ({
+      id: conn.id,
+      name: conn.name,
+      provider: conn.provider,
+      model: conn.model,
+      is_default: conn.is_default,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function getActiveContext() {
+  const chat = await spindle.chats.getActive();
+  if (!chat) return { chat: null, messages: [] as ChatMessage[] };
+  const messages = (await spindle.chat.getMessages(chat.id)) as ChatMessage[];
+  return { chat, messages };
+}
+
+async function buildState(userId?: string): Promise<SceneMapState> {
+  const settings = await loadSettings(userId);
+  const { chat, messages } = await getActiveContext();
+  const latest = getLatestTrackerEntry(messages);
+  return {
+    settings,
+    chatId: chat?.id ?? null,
+    latest,
+    messagesBehind: latest ? countAssistantMessagesAfter(messages, latest.messageId) : 0,
+    activeMessageId: findTargetMessage(messages)?.id ?? null,
+    generatingMessageId: [...activeGenerations.keys()][0] ?? null,
+    connections: await listConnections(userId),
+  };
+}
+
+async function pushState(userId?: string) {
+  const state = await buildState(userId);
+  spindle.sendToFrontend({ type: "state", state }, userId);
+  spindle.updateMacroValue("scenemap", trackerToText(state.latest?.data ?? null));
+}
+
+async function updateChatPreset(chatId: string, presetKey: string) {
+  const chat = await spindle.chats.get(chatId);
+  if (!chat) throw new Error("Active chat not found.");
+  await spindle.chats.update(chatId, {
+    metadata: {
+      ...(chat.metadata ?? {}),
+      [CHAT_METADATA_KEY]: {
+        ...((chat.metadata?.[CHAT_METADATA_KEY] as Record<string, unknown> | undefined) ?? {}),
+        schemaPreset: presetKey,
+      },
+    },
+  });
+}
+
+function getChatPresetKey(chat: { metadata?: Record<string, unknown> } | null, settings: SceneMapSettings): string {
+  const meta = chat?.metadata?.[CHAT_METADATA_KEY];
+  const key = meta && typeof meta === "object" ? (meta as Record<string, unknown>).schemaPreset : null;
+  return typeof key === "string" && settings.schemaPresets[key] ? key : settings.schemaPreset;
+}
+
+async function generateTracker(messageId: string | null | undefined, userId?: string) {
+  const { chat, messages } = await getActiveContext();
+  if (!chat) throw new Error("Open a chat before generating a SceneMap tracker.");
+
+  const target = findTargetMessage(messages, messageId);
+  if (!target) throw new Error("No assistant message found for SceneMap.");
+  if (target.role !== "assistant") throw new Error("SceneMap can only track assistant messages.");
+  if (activeGenerations.has(target.id)) {
+    activeGenerations.get(target.id)?.abort();
+    activeGenerations.delete(target.id);
+    await pushState(userId);
+    spindle.toast.info("SceneMap generation cancelled.");
+    return;
+  }
+
+  const settings = await loadSettings(userId);
+  const presetKey = getChatPresetKey(chat, settings);
+  const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  const previousTracker = getPreviousTrackerJson(messages, target.id, !!getMessageTracker(target));
+  const finalPrompt = renderPrompt(settings.promptJson, {
+    schema: JSON.stringify(preset.value, null, 2),
+    previous_tracker: previousTracker,
+    example_response: JSON.stringify(schemaToExample(preset.value), null, 2),
+  });
+  const promptMessages = trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages);
+  promptMessages.push({ role: "user", content: finalPrompt });
+
+  const controller = new AbortController();
+  activeGenerations.set(target.id, controller);
+  await pushState(userId);
+
+  try {
+    const result = await spindle.generate.quiet({
+      messages: promptMessages,
+      connection_id: settings.connectionId || undefined,
+      parameters: {
+        max_tokens: Math.max(1, Math.floor(settings.maxResponseTokens || 16000)),
+      },
+      signal: controller.signal,
+    });
+    const parsed = parseModelJson(result.content);
+    await spindle.chat.updateMessage(chat.id, target.id, {
+      metadata: withTrackerMetadata(target, parsed),
+    });
+    spindle.toast.success("Tracker updated.", { title: "SceneMap" });
+  } catch (error) {
+    if ((error as Error).name !== "AbortError") {
+      spindle.toast.error((error as Error).message, { title: "SceneMap generation failed", duration: 10000 });
+      throw error;
+    }
+  } finally {
+    activeGenerations.delete(target.id);
+    await pushState(userId);
+  }
+}
+
+async function editTracker(messageId: string, data: unknown, userId?: string) {
+  const { chat, messages } = await getActiveContext();
+  if (!chat) throw new Error("Open a chat before editing a tracker.");
+  const message = messages.find((item) => item.id === messageId);
+  if (!message) throw new Error("Message not found.");
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Tracker data must be a JSON object.");
+  await spindle.chat.updateMessage(chat.id, messageId, {
+    metadata: withTrackerMetadata(message, data),
+  });
+  spindle.toast.success("Tracker saved.", { title: "SceneMap" });
+  await pushState(userId);
+}
+
+async function deleteTracker(messageId: string, userId?: string) {
+  const { chat, messages } = await getActiveContext();
+  if (!chat) throw new Error("Open a chat before deleting a tracker.");
+  const message = messages.find((item) => item.id === messageId);
+  if (!message) throw new Error("Message not found.");
+  const { confirmed } = await spindle.modal.confirm({
+    title: "Delete Tracker",
+    message: "This will permanently remove SceneMap data from this message.",
+    variant: "danger",
+    confirmLabel: "Delete",
+    userId,
+  });
+  if (!confirmed) return;
+  await spindle.chat.updateMessage(chat.id, messageId, {
+    metadata: withoutTrackerMetadata(message),
+  });
+  spindle.toast.success("Tracker deleted.", { title: "SceneMap" });
+  await pushState(userId);
+}
+
+spindle.registerMacro({
+  name: "scenemap",
+  category: "extension:scenemap",
+  description: "Latest SceneMap state formatted as plain text for prompts.",
+  returnType: "string",
+  handler: "",
+});
+
+spindle.onFrontendMessage(async (payload: any, userId?: string) => {
+  try {
+    switch (payload?.type) {
+      case "get_state":
+        await pushState(userId);
+        break;
+      case "save_settings":
+        await saveSettings(payload.settings, userId);
+        await pushState(userId);
+        spindle.toast.success("Settings saved.", { title: "SceneMap" });
+        break;
+      case "set_chat_preset": {
+        const { chat } = await getActiveContext();
+        if (!chat) throw new Error("Open a chat before setting a chat preset.");
+        await updateChatPreset(chat.id, payload.presetKey);
+        await pushState(userId);
+        spindle.toast.success("Chat preset updated.", { title: "SceneMap" });
+        break;
+      }
+      case "generate_tracker":
+        await generateTracker(payload.messageId ?? null, userId);
+        break;
+      case "edit_tracker":
+        await editTracker(payload.messageId, payload.data, userId);
+        break;
+      case "delete_tracker":
+        await deleteTracker(payload.messageId, userId);
+        break;
+    }
+  } catch (error) {
+    spindle.sendToFrontend({ type: "error", message: (error as Error).message }, userId);
+    spindle.toast.error((error as Error).message, { title: "SceneMap", duration: 9000 });
+  }
+});
+
+spindle.on("CHAT_SWITCHED", () => {
+  void pushState();
+});
+spindle.on("MESSAGE_EDITED", () => {
+  void pushState();
+});
+spindle.on("MESSAGE_DELETED", () => {
+  void pushState();
+});
+spindle.on("MESSAGE_SWIPED", () => {
+  void pushState();
+});
+spindle.on("GENERATION_ENDED", (payload: any) => {
+  if (payload?.error || !payload?.messageId) return;
+  void (async () => {
+    const settings = await loadSettings();
+    if (!settings.autoGenerateAiTrackers) {
+      await pushState();
+      return;
+    }
+    await generateTracker(payload.messageId);
+  })();
+});
+
+void pushState();
+spindle.log.info("SceneMap loaded.");
