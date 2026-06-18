@@ -556,7 +556,7 @@ function editLayout() {
       if (action === "move-section-down" && sectionIndex !== null)
         moveItem(workingLayout.sections, sectionIndex, sectionIndex + 1);
       if (action === "add-field" && sectionIndex !== null) {
-        workingLayout.sections[sectionIndex].fields.push(createFieldFromOption(fieldOptions[0]));
+        workingLayout.sections[sectionIndex].fields.push(createFieldFromOption(getAvailableFieldOptions(workingLayout, fieldOptions)[0]));
       }
       if (action === "remove-field" && sectionIndex !== null && fieldIndex !== null) {
         workingLayout.sections[sectionIndex].fields.splice(fieldIndex, 1);
@@ -571,7 +571,7 @@ function editLayout() {
         const field = workingLayout.sections[sectionIndex].fields[fieldIndex];
         const parentOption = findFieldOption(fieldOptions, field.path);
         field.fields = field.fields ?? [];
-        field.fields.push(createFieldFromOption(parentOption?.children?.[0]));
+        field.fields.push(createFieldFromOption(getAvailableChildOptions(field, parentOption?.children ?? [])[0]));
       }
       if (action === "remove-child" && sectionIndex !== null && fieldIndex !== null && childIndex !== null) {
         workingLayout.sections[sectionIndex].fields[fieldIndex].fields?.splice(childIndex, 1);
@@ -607,13 +607,14 @@ function editLayout() {
   });
 }
 function renderLayoutEditor(layout, options) {
+  const hasAvailableFields = getAvailableFieldOptions(layout, options).length > 0;
   return `
     <div class="scenemap-layout-editor">
       <div class="scenemap-layout-intro">
-        <button type="button" data-layout-action="add-section">Add section</button>
+        <button type="button" class="scenemap-layout-add-btn" data-layout-action="add-section" ${hasAvailableFields ? "" : "disabled"}>${layoutIcon("plus")}<span>Add section</span></button>
       </div>
       <div class="scenemap-layout-sections">
-        ${layout.sections.map((section, sectionIndex) => renderLayoutSection(section, sectionIndex, layout.sections.length, options)).join("")}
+        ${layout.sections.map((section, sectionIndex) => renderLayoutSection(section, sectionIndex, layout, options)).join("")}
       </div>
       <div class="scenemap-modal-actions">
         <button type="button" data-layout-action="reset-layout">Reset default</button>
@@ -625,7 +626,8 @@ function renderLayoutEditor(layout, options) {
     </div>
   `;
 }
-function renderLayoutSection(section, sectionIndex, sectionCount, options) {
+function renderLayoutSection(section, sectionIndex, layout, options) {
+  const hasAvailableFields = getAvailableFieldOptions(layout, options).length > 0;
   return `
     <section class="scenemap-layout-section">
       <header class="scenemap-layout-section-header">
@@ -634,21 +636,21 @@ function renderLayoutSection(section, sectionIndex, sectionCount, options) {
           <input data-layout-input="section-title" data-section="${sectionIndex}" value="${escapeAttr(section.title)}">
         </label>
         <div class="scenemap-layout-actions">
-          <button type="button" title="Move up" data-layout-action="move-section-up" data-section="${sectionIndex}" ${sectionIndex === 0 ? "disabled" : ""}>Up</button>
-          <button type="button" title="Move down" data-layout-action="move-section-down" data-section="${sectionIndex}" ${sectionIndex >= sectionCount - 1 ? "disabled" : ""}>Down</button>
-          <button type="button" data-layout-action="remove-section" data-section="${sectionIndex}">Remove</button>
+          ${iconButton("move-section-up", "Move up", "up", { section: sectionIndex, disabled: sectionIndex === 0 })}
+          ${iconButton("move-section-down", "Move down", "down", { section: sectionIndex, disabled: sectionIndex >= layout.sections.length - 1 })}
+          ${iconButton("remove-section", "Remove section", "trash", { section: sectionIndex })}
         </div>
       </header>
       <div class="scenemap-layout-fields">
-        ${section.fields.map((field, fieldIndex) => renderLayoutField(field, sectionIndex, fieldIndex, section.fields.length, options)).join("")}
+        ${section.fields.map((field, fieldIndex) => renderLayoutField(field, sectionIndex, fieldIndex, layout, options)).join("")}
       </div>
-      <button type="button" data-layout-action="add-field" data-section="${sectionIndex}" ${options.length === 0 ? "disabled" : ""}>Add field</button>
+      <button type="button" class="scenemap-layout-add-btn" data-layout-action="add-field" data-section="${sectionIndex}" ${hasAvailableFields ? "" : "disabled"}>${layoutIcon("plus")}<span>Add field</span></button>
     </section>
   `;
 }
-function renderLayoutField(field, sectionIndex, fieldIndex, fieldCount, options) {
+function renderLayoutField(field, sectionIndex, fieldIndex, layout, options) {
   const option = findFieldOption(options, field.path);
-  const selectOptions = ensureOption(options, field).map((item) => `<option value="${escapeAttr(item.path)}" ${item.path === field.path ? "selected" : ""}>${escapeHtml(item.label)} (${escapeHtml(item.path)})</option>`).join("");
+  const selectOptions = getAvailableFieldOptions(layout, options, field.path).map((item) => `<option value="${escapeAttr(item.path)}" ${item.path === field.path ? "selected" : ""}>${escapeHtml(item.label)} (${escapeHtml(item.path)})</option>`).join("");
   const childEditor = field.display === "character_cards" ? renderChildFieldEditor(field, option?.children ?? [], sectionIndex, fieldIndex) : "";
   return `
     <article class="scenemap-layout-field">
@@ -671,9 +673,9 @@ function renderLayoutField(field, sectionIndex, fieldIndex, fieldCount, options)
         </label>
       </div>
       <div class="scenemap-layout-actions">
-        <button type="button" data-layout-action="move-field-up" data-section="${sectionIndex}" data-field="${fieldIndex}" ${fieldIndex === 0 ? "disabled" : ""}>Up</button>
-        <button type="button" data-layout-action="move-field-down" data-section="${sectionIndex}" data-field="${fieldIndex}" ${fieldIndex >= fieldCount - 1 ? "disabled" : ""}>Down</button>
-        <button type="button" data-layout-action="remove-field" data-section="${sectionIndex}" data-field="${fieldIndex}">Remove</button>
+        ${iconButton("move-field-up", "Move up", "up", { section: sectionIndex, field: fieldIndex, disabled: fieldIndex === 0 })}
+        ${iconButton("move-field-down", "Move down", "down", { section: sectionIndex, field: fieldIndex, disabled: fieldIndex >= layout.sections[sectionIndex].fields.length - 1 })}
+        ${iconButton("remove-field", "Remove field", "trash", { section: sectionIndex, field: fieldIndex })}
       </div>
       ${childEditor}
     </article>
@@ -681,18 +683,19 @@ function renderLayoutField(field, sectionIndex, fieldIndex, fieldCount, options)
 }
 function renderChildFieldEditor(field, options, sectionIndex, fieldIndex) {
   const children = field.fields ?? [];
+  const hasAvailableChildren = getAvailableChildOptions(field, options).length > 0;
   return `
     <div class="scenemap-layout-child-box">
       <div class="scenemap-layout-child-header">
         <strong>Card fields</strong>
-        <button type="button" data-layout-action="add-child" data-section="${sectionIndex}" data-field="${fieldIndex}" ${options.length === 0 ? "disabled" : ""}>Add card field</button>
+        <button type="button" class="scenemap-layout-add-btn" data-layout-action="add-child" data-section="${sectionIndex}" data-field="${fieldIndex}" ${hasAvailableChildren ? "" : "disabled"}>${layoutIcon("plus")}<span>Add card field</span></button>
       </div>
-      ${children.map((child, childIndex) => renderChildField(child, childIndex, children.length, options, sectionIndex, fieldIndex)).join("")}
+      ${children.map((child, childIndex) => renderChildField(field, child, childIndex, children.length, options, sectionIndex, fieldIndex)).join("")}
     </div>
   `;
 }
-function renderChildField(child, childIndex, childCount, options, sectionIndex, fieldIndex) {
-  const selectOptions = ensureOption(options, child).map((item) => `<option value="${escapeAttr(item.path)}" ${item.path === child.path ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("");
+function renderChildField(parent, child, childIndex, childCount, options, sectionIndex, fieldIndex) {
+  const selectOptions = getAvailableChildOptions(parent, options, child.path).map((item) => `<option value="${escapeAttr(item.path)}" ${item.path === child.path ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("");
   return `
     <div class="scenemap-layout-child-row">
       <select data-layout-input="child-path" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}">
@@ -702,9 +705,9 @@ function renderChildField(child, childIndex, childCount, options, sectionIndex, 
       <select data-layout-input="child-display" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}">
         ${renderDisplayOptions(child.display ?? "text", false)}
       </select>
-      <button type="button" data-layout-action="move-child-up" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}" ${childIndex === 0 ? "disabled" : ""}>Up</button>
-      <button type="button" data-layout-action="move-child-down" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}" ${childIndex >= childCount - 1 ? "disabled" : ""}>Down</button>
-      <button type="button" data-layout-action="remove-child" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}">Remove</button>
+      ${iconButton("move-child-up", "Move up", "up", { section: sectionIndex, field: fieldIndex, child: childIndex, disabled: childIndex === 0 })}
+      ${iconButton("move-child-down", "Move down", "down", { section: sectionIndex, field: fieldIndex, child: childIndex, disabled: childIndex >= childCount - 1 })}
+      ${iconButton("remove-child", "Remove card field", "trash", { section: sectionIndex, field: fieldIndex, child: childIndex })}
     </div>
   `;
 }
@@ -763,10 +766,27 @@ function defaultDisplayForSchema(schema, path) {
 function findFieldOption(options, path) {
   return options.find((option) => option.path === path);
 }
-function ensureOption(options, field) {
-  if (options.some((option) => option.path === field.path))
-    return options;
-  return [{ path: field.path, label: field.label || humanizeTrackerKey(field.path.split(".").pop() || field.path), display: field.display || "text", children: field.fields }, ...options];
+function getAvailableFieldOptions(layout, options, currentPath) {
+  const used = new Set;
+  for (const section of layout.sections) {
+    for (const field of section.fields) {
+      if (field.path && field.path !== currentPath)
+        used.add(field.path);
+    }
+  }
+  const available = options.filter((option) => !used.has(option.path));
+  if (currentPath && !available.some((option) => option.path === currentPath)) {
+    available.unshift({ path: currentPath, label: humanizeTrackerKey(currentPath.split(".").pop() || currentPath), display: "text" });
+  }
+  return available;
+}
+function getAvailableChildOptions(parent, options, currentPath) {
+  const used = new Set((parent.fields ?? []).map((field) => field.path).filter((path) => path && path !== currentPath));
+  const available = options.filter((option) => !used.has(option.path));
+  if (currentPath && !available.some((option) => option.path === currentPath)) {
+    available.unshift({ path: currentPath, label: humanizeTrackerKey(currentPath.split(".").pop() || currentPath), display: "text" });
+  }
+  return available;
 }
 function createFieldFromOption(option) {
   if (!option)
@@ -809,6 +829,24 @@ function validateLayout(layout) {
       }));
     }
   }
+}
+function iconButton(action, label, icon, options) {
+  const data = [
+    `data-layout-action="${action}"`,
+    options.section !== undefined ? `data-section="${options.section}"` : "",
+    options.field !== undefined ? `data-field="${options.field}"` : "",
+    options.child !== undefined ? `data-child="${options.child}"` : ""
+  ].filter(Boolean).join(" ");
+  return `<button type="button" class="scenemap-layout-icon-btn" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}" ${data} ${options.disabled ? "disabled" : ""}>${layoutIcon(icon)}</button>`;
+}
+function layoutIcon(name) {
+  const paths = {
+    plus: `<path d="M12 5v14"/><path d="M5 12h14"/>`,
+    up: `<path d="m18 15-6-6-6 6"/>`,
+    down: `<path d="m6 9 6 6 6-6"/>`,
+    trash: `<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v5"/><path d="M14 11v5"/>`
+  };
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 }
 function openJsonEditor(title, value, onSave) {
   openTextEditor(title, JSON.stringify(value, null, 2), (text) => {
@@ -990,6 +1028,8 @@ var styles = `
 .scenemap-layout-field-grid { display: grid; grid-template-columns: minmax(180px, 1.4fr) minmax(140px, 1fr) minmax(110px, .55fr); gap: 8px; align-items: end; }
 .scenemap-layout-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .scenemap-layout-actions button, .scenemap-layout-child-row button { padding: 5px 8px; font-size: 12px; }
+.scenemap-layout-icon-btn { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.scenemap-layout-add-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .scenemap-layout-child-box { border-top: 1px solid var(--lumiverse-border); padding-top: 9px; display: flex; flex-direction: column; gap: 7px; }
 .scenemap-layout-child-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .scenemap-layout-child-header strong { font-size: 12px; color: var(--lumiverse-text-muted); text-transform: uppercase; }
