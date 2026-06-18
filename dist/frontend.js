@@ -618,9 +618,9 @@ var styles = `
 }
 .scenemap-editor { display: flex; flex-direction: column; gap: 10px; }
 .scenemap-editor textarea { min-height: min(58vh, 520px); resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
-button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
-button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
-button:disabled { opacity: 0.45; cursor: default; }
+.scenemap-lv button, .scenemap-editor button, .scenemap-float-button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
+.scenemap-lv button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-float-button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
+.scenemap-lv button:disabled, .scenemap-editor button:disabled, .scenemap-float-button:disabled { opacity: 0.45; cursor: default; }
 .scenemap-primary { background: var(--lumiverse-accent); color: var(--lumiverse-accent-fg); border-color: transparent; }
 .scenemap-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: 8px; padding: 10px; font-size: 12px; }
