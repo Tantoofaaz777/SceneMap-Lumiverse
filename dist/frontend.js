@@ -490,7 +490,7 @@ function renamePreset() {
   const settings = mergeSettings(state.settings);
   const key = settings.schemaPreset;
   const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
-  openNameEditor("Rename Preset", preset.name, "Rename preset", (name) => {
+  openNameEditor("Rename Preset", preset.name, "Save", (name) => {
     settings.schemaPresets[key] = { ...preset, name };
     state = { ...state, settings };
     render();
@@ -529,8 +529,8 @@ function openNameEditor(title, initialValue, submitLabel, onSave) {
         <input data-name-input value="${escapeAttr(initialValue)}" placeholder="Preset name">
       </label>
       <div class="scenemap-modal-actions">
-        <button data-modal-action="cancel">Cancel</button>
-        <button class="scenemap-primary" data-modal-action="save">${escapeHtml(submitLabel)}</button>
+        <button class="scenemap-pill-action" data-modal-action="cancel">Cancel</button>
+        <button class="scenemap-pill-action scenemap-primary" data-modal-action="save">${escapeHtml(submitLabel)}</button>
       </div>
       <div class="scenemap-inline-error" hidden></div>
     </div>
