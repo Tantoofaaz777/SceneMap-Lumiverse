@@ -299,6 +299,7 @@ function updateSettingFromControl(target: HTMLInputElement | HTMLSelectElement, 
     (settings as any)[key] = target.value;
   }
   state = { ...state, settings };
+  if (key === "schemaPreset") renderSettings();
 }
 
 function createPreset() {
@@ -326,43 +327,23 @@ function renamePreset() {
   });
 }
 
-function deletePreset() {
+async function deletePreset() {
   const settings = mergeSettings(state.settings);
   const key = settings.schemaPreset;
   if (key === "default") return;
   const preset = settings.schemaPresets[key];
   if (!preset || Object.keys(settings.schemaPresets).length <= 1) return;
-  openConfirmEditor("Delete Preset", `Delete "${preset.name}"?`, "Delete", () => {
-    delete settings.schemaPresets[key];
-    const fallbackKey = settings.schemaPresets.default ? "default" : Object.keys(settings.schemaPresets)[0];
-    state = { ...state, settings: { ...settings, schemaPreset: fallbackKey } };
-    render();
+  const result = await ctxRef?.ui.showConfirm({
+    title: "Delete Preset",
+    message: `Delete "${preset.name}"?`,
+    variant: "danger",
+    confirmLabel: "Delete",
   });
-}
-
-function openConfirmEditor(title: string, message: string, confirmLabel: string, onConfirm: () => void) {
-  const ctx = ctxRef;
-  if (!ctx) return;
-  const modal = ctx.ui.showModal({ title, width: 420, maxHeight: 260 });
-  modal.root.innerHTML = `
-    <div class="scenemap-confirm-editor">
-      <p>${escapeHtml(message)}</p>
-      <div class="scenemap-modal-actions">
-        <button data-modal-action="cancel">Cancel</button>
-        <button class="scenemap-danger" data-modal-action="confirm">${escapeHtml(confirmLabel)}</button>
-      </div>
-    </div>
-  `;
-  modal.root.addEventListener("click", (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLElement>("[data-modal-action]");
-    if (!button) return;
-    if (button.dataset.modalAction === "cancel") {
-      modal.dismiss();
-      return;
-    }
-    onConfirm();
-    modal.dismiss();
-  });
+  if (!result?.confirmed) return;
+  delete settings.schemaPresets[key];
+  const fallbackKey = settings.schemaPresets.default ? "default" : Object.keys(settings.schemaPresets)[0];
+  state = { ...state, settings: { ...settings, schemaPreset: fallbackKey } };
+  render();
 }
 
 function openNameEditor(title: string, initialValue: string, submitLabel: string, onSave: (name: string) => void) {
@@ -1032,10 +1013,9 @@ const styles = `
 .scenemap-settings .scenemap-check { flex-direction: row; align-items: center; color: var(--lumiverse-text); }
 .scenemap-settings-preset-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto auto auto; gap: 8px; align-items: end; }
 .scenemap-settings-preset-row label { margin: 10px 0 0; min-width: 0; }
+.scenemap-settings-preset-row .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-width: 68px; }
 .scenemap-settings-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
 .scenemap-settings-actions-left, .scenemap-settings-actions-right { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.scenemap-confirm-editor { display: flex; flex-direction: column; gap: 14px; color: var(--lumiverse-text); }
-.scenemap-confirm-editor p { margin: 0; color: var(--lumiverse-text-muted); font-size: 13px; line-height: 1.45; }
 .scenemap-settings input:not([type="checkbox"]), .scenemap-settings select, .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-layout-editor select, .scenemap-name-editor input {
   width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: 6px;
   background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 7px 9px; font: inherit;
@@ -1067,8 +1047,8 @@ const styles = `
 .scenemap-lv button:disabled, .scenemap-settings-root button:disabled, .scenemap-editor button:disabled, .scenemap-layout-editor button:disabled, .scenemap-name-editor button:disabled, .scenemap-float-button:disabled { opacity: 0.45; cursor: default; }
 .scenemap-lv .scenemap-primary, .scenemap-settings-root .scenemap-primary, .scenemap-editor .scenemap-primary, .scenemap-layout-editor .scenemap-primary, .scenemap-name-editor .scenemap-primary { background: var(--lumiverse-primary-015, color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 15%, transparent)); color: var(--lumiverse-primary-text, var(--lumiverse-primary, var(--lumiverse-accent))); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); }
 .scenemap-lv .scenemap-primary:hover:not(:disabled), .scenemap-settings-root .scenemap-primary:hover:not(:disabled), .scenemap-editor .scenemap-primary:hover:not(:disabled), .scenemap-layout-editor .scenemap-primary:hover:not(:disabled), .scenemap-name-editor .scenemap-primary:hover:not(:disabled) { background: var(--lumiverse-primary-020, color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 22%, transparent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
-.scenemap-lv .scenemap-danger, .scenemap-settings-root .scenemap-danger, .scenemap-editor .scenemap-danger, .scenemap-layout-editor .scenemap-danger, .scenemap-name-editor .scenemap-danger, .scenemap-confirm-editor .scenemap-danger { background: var(--lumiverse-danger-015, rgba(239, 68, 68, .15)); color: var(--lumiverse-danger, #ef4444); border-color: var(--lumiverse-danger-050, rgba(239, 68, 68, .5)); }
-.scenemap-lv .scenemap-danger:hover:not(:disabled), .scenemap-settings-root .scenemap-danger:hover:not(:disabled), .scenemap-editor .scenemap-danger:hover:not(:disabled), .scenemap-layout-editor .scenemap-danger:hover:not(:disabled), .scenemap-name-editor .scenemap-danger:hover:not(:disabled), .scenemap-confirm-editor .scenemap-danger:hover:not(:disabled) { background: var(--lumiverse-danger-020, rgba(239, 68, 68, .2)); border-color: var(--lumiverse-danger, #ef4444); }
+.scenemap-lv .scenemap-danger, .scenemap-settings-root .scenemap-danger, .scenemap-editor .scenemap-danger, .scenemap-layout-editor .scenemap-danger, .scenemap-name-editor .scenemap-danger { background: var(--lumiverse-danger-015, rgba(239, 68, 68, .15)); color: var(--lumiverse-danger, #ef4444); border-color: var(--lumiverse-danger-050, rgba(239, 68, 68, .5)); }
+.scenemap-lv .scenemap-danger:hover:not(:disabled), .scenemap-settings-root .scenemap-danger:hover:not(:disabled), .scenemap-editor .scenemap-danger:hover:not(:disabled), .scenemap-layout-editor .scenemap-danger:hover:not(:disabled), .scenemap-name-editor .scenemap-danger:hover:not(:disabled) { background: var(--lumiverse-danger-020, rgba(239, 68, 68, .2)); border-color: var(--lumiverse-danger, #ef4444); }
 .scenemap-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
 .scenemap-pill-action { border-radius: 999px !important; padding: 7px 13px !important; min-height: 34px; }
 .scenemap-pill-icon { width: 34px; min-width: 34px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; }
