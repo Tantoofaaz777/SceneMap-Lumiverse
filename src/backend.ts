@@ -218,15 +218,16 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
     const result = await (spindle.generate.quiet as any)({
       messages: promptMessages,
       connection_id: settings.connectionId || undefined,
+      userId,
       parameters: {
         max_tokens: Math.max(1, Math.floor(settings.maxResponseTokens || 16000)),
       },
       signal: controller.signal,
-    }, userId);
+    });
     const parsed = parseModelJson(result.content);
-    await (spindle.chat.updateMessage as any)(chat.id, target.id, {
+    await spindle.chat.updateMessage(chat.id, target.id, {
       metadata: withTrackerMetadata(target, parsed),
-    }, userId);
+    });
     spindle.toast.success("Tracker updated.", { title: "SceneMap", userId });
   } catch (error) {
     if ((error as Error).name !== "AbortError") {
@@ -247,9 +248,9 @@ async function editTracker(messageId: string, data: unknown, userId?: string) {
   const message = messages.find((item) => item.id === messageId);
   if (!message) throw new Error("Message not found.");
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Tracker data must be a JSON object.");
-  await (spindle.chat.updateMessage as any)(chat.id, messageId, {
+  await spindle.chat.updateMessage(chat.id, messageId, {
     metadata: withTrackerMetadata(message, data),
-  }, userId);
+  });
   spindle.toast.success("Tracker saved.", { title: "SceneMap", userId });
   if (userId) await pushState(userId);
   else await refreshMacroValue();
@@ -269,9 +270,9 @@ async function deleteTracker(messageId: string, userId?: string) {
     userId,
   });
   if (!confirmed) return;
-  await (spindle.chat.updateMessage as any)(chat.id, messageId, {
+  await spindle.chat.updateMessage(chat.id, messageId, {
     metadata: withoutTrackerMetadata(message),
-  }, userId);
+  });
   spindle.toast.success("Tracker deleted.", { title: "SceneMap", userId });
   if (userId) await pushState(userId);
   else await refreshMacroValue();

@@ -525,15 +525,16 @@ async function generateTracker(messageId, userId) {
     const result = await spindle.generate.quiet({
       messages: promptMessages,
       connection_id: settings.connectionId || undefined,
+      userId,
       parameters: {
         max_tokens: Math.max(1, Math.floor(settings.maxResponseTokens || 16000))
       },
       signal: controller.signal
-    }, userId);
+    });
     const parsed = parseModelJson(result.content);
     await spindle.chat.updateMessage(chat.id, target.id, {
       metadata: withTrackerMetadata(target, parsed)
-    }, userId);
+    });
     spindle.toast.success("Tracker updated.", { title: "SceneMap", userId });
   } catch (error) {
     if (error.name !== "AbortError") {
@@ -561,7 +562,7 @@ async function editTracker(messageId, data, userId) {
     throw new Error("Tracker data must be a JSON object.");
   await spindle.chat.updateMessage(chat.id, messageId, {
     metadata: withTrackerMetadata(message, data)
-  }, userId);
+  });
   spindle.toast.success("Tracker saved.", { title: "SceneMap", userId });
   if (userId)
     await pushState(userId);
@@ -588,7 +589,7 @@ async function deleteTracker(messageId, userId) {
     return;
   await spindle.chat.updateMessage(chat.id, messageId, {
     metadata: withoutTrackerMetadata(message)
-  }, userId);
+  });
   spindle.toast.success("Tracker deleted.", { title: "SceneMap", userId });
   if (userId)
     await pushState(userId);
