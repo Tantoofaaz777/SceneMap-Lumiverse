@@ -982,7 +982,7 @@ const styles = `
 .scenemap-section:last-child { border-bottom: 0; }
 .scenemap-section h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 12px; text-align: center; text-transform: uppercase; font-weight: 800; }
 .scenemap-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
-.scenemap-field span { color: var(--lumiverse-text-dim); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.scenemap-field span { color: var(--lumiverse-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .scenemap-field p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; }
 .scenemap-field p.subtle { color: var(--lumiverse-text-muted); }
 .scenemap-field p.mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-style: italic; }
@@ -990,7 +990,7 @@ const styles = `
 .scenemap-chips b { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 650; }
 .scenemap-character-grid { display: flex; flex-direction: column; gap: 10px; }
 .scenemap-character { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: 8px; padding: 10px; }
-.scenemap-character h4 { margin: 0 0 10px; font-size: 13px; }
+.scenemap-character h4 { margin: 0 0 10px; color: var(--lumiverse-text); font-size: 14px; font-weight: 750; }
 .scenemap-settings-heading { margin-bottom: 12px; }
 .scenemap-settings-heading h3 { margin: 0; font-size: 15px; font-weight: 800; }
 .scenemap-settings label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
