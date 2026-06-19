@@ -205,7 +205,7 @@ EXAMPLE OF A PERFECT RESPONSE:
 \`\`\``;
 
 export const defaultSettings: SceneMapSettings = {
-  version: "0.1.0",
+  version: "1.0.0",
   formatVersion: "F_1.0",
   connectionId: "",
   maxResponseTokens: 16000,

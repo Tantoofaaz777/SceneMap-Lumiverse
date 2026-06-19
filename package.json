@@ -1,6 +1,6 @@
 {
   "name": "scenemap-lumiverse",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "build": "bun build src/backend.ts --target bun --outfile dist/backend.js && bun build src/frontend.ts --target browser --outfile dist/frontend.js"
