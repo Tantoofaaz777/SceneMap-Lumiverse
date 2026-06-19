@@ -46,9 +46,9 @@ export function setup(ctx: SpindleFrontendContext) {
   });
   tabHandle = tab;
   rootRef = tab.root;
-  rootRef.className = "scenemap-lv";
+  rootRef.classList.add("scenemap-lv");
   settingsRootRef = ctx.ui.mount("settings_extensions");
-  settingsRootRef.className = "scenemap-settings-root";
+  settingsRootRef.classList.add("scenemap-settings-root");
   render();
 
   const action = ctx.ui.registerInputBarAction({
@@ -960,9 +960,9 @@ function refreshSvg(): string {
 }
 
 const styles = `
-.scenemap-lv { height: 100%; color: var(--lumiverse-text); }
+.scenemap-lv { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; color: var(--lumiverse-text); }
 .scenemap-settings-root { color: var(--lumiverse-text); }
-.scenemap-shell { display: flex; flex-direction: column; gap: 12px; padding: 14px; min-height: 100%; box-sizing: border-box; }
+.scenemap-shell { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; padding: 14px; min-height: 0; box-sizing: border-box; overflow: hidden; }
 .scenemap-header { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; }
 .scenemap-header h2 { margin: 0; font-size: 18px; font-weight: 700; }
 .scenemap-header p { margin: 3px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; }
@@ -974,7 +974,7 @@ const styles = `
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scenemap-modal-spacer { flex: 1 1 auto; }
 .scenemap-card { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
-.scenemap-board { overflow: auto; }
+.scenemap-board { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .scenemap-empty { color: var(--lumiverse-text-muted); font-size: 13px; text-align: center; padding: 20px 4px; }
 .scenemap-section { padding: 10px 0 12px; border-bottom: 1px solid var(--lumiverse-border); }
 .scenemap-section:last-child { border-bottom: 0; }
