@@ -234,20 +234,6 @@ function setup(ctx) {
     send({ type: "generate_tracker", messageId: state.activeMessageId });
     tab.activate();
   });
-  let floatWidget = null;
-  try {
-    floatWidget = ctx.ui.createFloatWidget({
-      width: 44,
-      height: 44,
-      tooltip: "SceneMap",
-      chromeless: true,
-      snapToEdge: true,
-      initialPosition: { x: window.innerWidth - 72, y: 110 }
-    });
-    floatWidget.root.className = "scenemap-float-root";
-    floatWidget.root.innerHTML = `<button class="scenemap-float-button" type="button" title="SceneMap">${iconSvg}</button>`;
-    floatWidget.root.querySelector("button")?.addEventListener("click", () => tab.activate());
-  } catch {}
   const offBackend = ctx.onBackendMessage((payload) => {
     if (payload?.type === "state") {
       state = payload.state;
@@ -291,7 +277,6 @@ function setup(ctx) {
     for (const off of offEvents)
       off();
     action.destroy();
-    floatWidget?.destroy();
     tab.destroy();
     removeStyle();
     ctx.dom.cleanup();
@@ -1172,9 +1157,9 @@ var styles = `
 .scenemap-layout-child-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .scenemap-layout-child-header strong { font-size: 12px; color: var(--lumiverse-text-muted); text-transform: uppercase; }
 .scenemap-layout-child-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto auto auto; gap: 6px; align-items: center; }
-.scenemap-lv button, .scenemap-settings-root button, .scenemap-editor button, .scenemap-layout-editor button, .scenemap-name-editor button, .scenemap-float-button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
-.scenemap-lv button:hover:not(:disabled), .scenemap-settings-root button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-layout-editor button:hover:not(:disabled), .scenemap-name-editor button:hover:not(:disabled), .scenemap-float-button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
-.scenemap-lv button:disabled, .scenemap-settings-root button:disabled, .scenemap-editor button:disabled, .scenemap-layout-editor button:disabled, .scenemap-name-editor button:disabled, .scenemap-float-button:disabled { opacity: 0.45; cursor: default; }
+.scenemap-lv button, .scenemap-settings-root button, .scenemap-editor button, .scenemap-layout-editor button, .scenemap-name-editor button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
+.scenemap-lv button:hover:not(:disabled), .scenemap-settings-root button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-layout-editor button:hover:not(:disabled), .scenemap-name-editor button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
+.scenemap-lv button:disabled, .scenemap-settings-root button:disabled, .scenemap-editor button:disabled, .scenemap-layout-editor button:disabled, .scenemap-name-editor button:disabled { opacity: 0.45; cursor: default; }
 .scenemap-lv .scenemap-primary, .scenemap-settings-root .scenemap-primary, .scenemap-editor .scenemap-primary, .scenemap-layout-editor .scenemap-primary, .scenemap-name-editor .scenemap-primary { background: var(--lumiverse-primary-015, color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 15%, transparent)); color: var(--lumiverse-primary-text, var(--lumiverse-primary, var(--lumiverse-accent))); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); }
 .scenemap-lv .scenemap-primary:hover:not(:disabled), .scenemap-settings-root .scenemap-primary:hover:not(:disabled), .scenemap-editor .scenemap-primary:hover:not(:disabled), .scenemap-layout-editor .scenemap-primary:hover:not(:disabled), .scenemap-name-editor .scenemap-primary:hover:not(:disabled) { background: var(--lumiverse-primary-020, color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 22%, transparent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
 .scenemap-lv .scenemap-danger, .scenemap-settings-root .scenemap-danger, .scenemap-editor .scenemap-danger, .scenemap-layout-editor .scenemap-danger, .scenemap-name-editor .scenemap-danger { background: var(--lumiverse-danger-015, rgba(239, 68, 68, .15)); color: var(--lumiverse-danger, #ef4444); border-color: var(--lumiverse-danger-050, rgba(239, 68, 68, .5)); }
@@ -1183,8 +1168,6 @@ var styles = `
 .scenemap-pill-action { border-radius: 999px !important; padding: 7px 13px !important; min-height: 34px; }
 .scenemap-pill-icon { width: 34px; min-width: 34px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: 8px; padding: 10px; font-size: 12px; }
-.scenemap-float-root { width: 100%; height: 100%; }
-.scenemap-float-button { width: 100%; height: 100%; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
 @media (max-width: 760px) {
   .scenemap-layout-section-header, .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: 1fr; }
   .scenemap-settings-preset-row { grid-template-columns: 1fr; align-items: stretch; }
