@@ -183,12 +183,7 @@ async function buildReferencePromptMessage(chat: ActiveChat, userId: string): Pr
     await buildActiveWorldInfoReference(chat.id, userId),
   ].filter(Boolean) as string[];
   if (sections.length === 0) return null;
-  const content = [
-    "SceneMap reference context for structured scene tracking.",
-    "Use this as factual background for names, identity, appearance, setting, and lore. Do not imitate the normal roleplay prompt; only use it to produce the requested tracker JSON.",
-    "",
-    ...sections,
-  ].join("\n");
+  const content = sections.join("\n\n");
   return {
     role: "system",
     content: await resolveDisplayText(content, context),
@@ -201,8 +196,7 @@ async function buildCharacterReference(chat: ActiveChat, userId: string): Promis
     const character = await spindle.characters.get(chat.character_id, userId);
     if (!character) return null;
     const lines = [
-      "Character card:",
-      labeledText("Name", character.name),
+      `${compactText(character.name) || "Character"}:`,
       labeledText("Description", character.description),
       labeledText("Personality", character.personality),
       labeledText("Scenario", character.scenario),
@@ -219,11 +213,8 @@ async function buildPersonaReference(userId: string): Promise<string | null> {
     const persona = await spindle.personas.getActive(userId) ?? await spindle.personas.getDefault(userId);
     if (!persona) return null;
     const lines = [
-      "Active persona:",
-      labeledText("Name", persona.name),
-      labeledText("Title", persona.title),
+      `${compactText(persona.name) || "Persona"}:`,
       labeledText("Description", persona.description),
-      persona.is_narrator ? "Narrator: yes" : "",
     ].filter(Boolean);
     return lines.length > 1 ? lines.join("\n") : null;
   } catch (error) {

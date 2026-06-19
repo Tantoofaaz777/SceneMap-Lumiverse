@@ -478,12 +478,8 @@ async function buildReferencePromptMessage(chat, userId) {
   ].filter(Boolean);
   if (sections.length === 0)
     return null;
-  const content = [
-    "SceneMap reference context for structured scene tracking.",
-    "Use this as factual background for names, identity, appearance, setting, and lore. Do not imitate the normal roleplay prompt; only use it to produce the requested tracker JSON.",
-    "",
-    ...sections
-  ].join(`
+  const content = sections.join(`
+
 `);
   return {
     role: "system",
@@ -498,8 +494,7 @@ async function buildCharacterReference(chat, userId) {
     if (!character)
       return null;
     const lines = [
-      "Character card:",
-      labeledText("Name", character.name),
+      `${compactText(character.name) || "Character"}:`,
       labeledText("Description", character.description),
       labeledText("Personality", character.personality),
       labeledText("Scenario", character.scenario)
@@ -517,11 +512,8 @@ async function buildPersonaReference(userId) {
     if (!persona)
       return null;
     const lines = [
-      "Active persona:",
-      labeledText("Name", persona.name),
-      labeledText("Title", persona.title),
-      labeledText("Description", persona.description),
-      persona.is_narrator ? "Narrator: yes" : ""
+      `${compactText(persona.name) || "Persona"}:`,
+      labeledText("Description", persona.description)
     ].filter(Boolean);
     return lines.length > 1 ? lines.join(`
 `) : null;
