@@ -375,7 +375,7 @@ function renderSettings() {
           <button class="scenemap-pill-action" data-action="edit-layout">Layout</button>
         </div>
         <div class="scenemap-settings-actions-right">
-          <button class="scenemap-pill-action scenemap-danger" data-action="reset-defaults">Reset</button>
+          <button class="scenemap-pill-action scenemap-warning" data-action="reset-defaults">Reset</button>
           <button class="scenemap-pill-action scenemap-primary" data-action="save-settings">Save settings</button>
         </div>
       </div>
@@ -1289,6 +1289,8 @@ var styles = `
 .scenemap-lv .scenemap-primary:hover:not(:disabled), .scenemap-settings-root .scenemap-primary:hover:not(:disabled), .scenemap-editor .scenemap-primary:hover:not(:disabled), .scenemap-layout-editor .scenemap-primary:hover:not(:disabled), .scenemap-name-editor .scenemap-primary:hover:not(:disabled) { background: var(--lumiverse-primary-020, color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 22%, transparent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
 .scenemap-lv .scenemap-danger, .scenemap-settings-root .scenemap-danger, .scenemap-editor .scenemap-danger, .scenemap-layout-editor .scenemap-danger, .scenemap-name-editor .scenemap-danger { background: var(--lumiverse-danger-015, rgba(239, 68, 68, .15)); color: var(--lumiverse-danger, #ef4444); border-color: var(--lumiverse-danger-050, rgba(239, 68, 68, .5)); }
 .scenemap-lv .scenemap-danger:hover:not(:disabled), .scenemap-settings-root .scenemap-danger:hover:not(:disabled), .scenemap-editor .scenemap-danger:hover:not(:disabled), .scenemap-layout-editor .scenemap-danger:hover:not(:disabled), .scenemap-name-editor .scenemap-danger:hover:not(:disabled) { background: var(--lumiverse-danger-020, rgba(239, 68, 68, .2)); border-color: var(--lumiverse-danger, #ef4444); }
+.scenemap-lv .scenemap-warning, .scenemap-settings-root .scenemap-warning, .scenemap-editor .scenemap-warning, .scenemap-layout-editor .scenemap-warning, .scenemap-name-editor .scenemap-warning { background: var(--lumiverse-warning-015, rgba(245, 158, 11, .15)); color: var(--lumiverse-warning, #f59e0b); border-color: var(--lumiverse-warning-050, rgba(245, 158, 11, .5)); }
+.scenemap-lv .scenemap-warning:hover:not(:disabled), .scenemap-settings-root .scenemap-warning:hover:not(:disabled), .scenemap-editor .scenemap-warning:hover:not(:disabled), .scenemap-layout-editor .scenemap-warning:hover:not(:disabled), .scenemap-name-editor .scenemap-warning:hover:not(:disabled) { background: var(--lumiverse-warning-020, rgba(245, 158, 11, .2)); border-color: var(--lumiverse-warning, #f59e0b); }
 .scenemap-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
 .scenemap-pill-action { border-radius: 999px !important; padding: 7px 13px !important; min-height: 34px; }
 .scenemap-pill-icon { width: 34px; min-width: 34px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; }
