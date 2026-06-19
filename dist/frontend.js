@@ -754,10 +754,10 @@ function renderLayoutEditor(layout, options) {
         ${layout.sections.map((section, sectionIndex) => renderLayoutSection(section, sectionIndex, layout, options)).join("")}
       </div>
       <div class="scenemap-modal-actions">
-        <button type="button" data-layout-action="reset-layout">Reset default</button>
+        <button type="button" class="scenemap-pill-action scenemap-danger" data-layout-action="reset-layout">Reset default</button>
         <span class="scenemap-modal-spacer"></span>
-        <button type="button" data-layout-action="cancel">Cancel</button>
-        <button type="button" class="scenemap-primary" data-layout-action="save-layout">Save layout</button>
+        <button type="button" class="scenemap-pill-action" data-layout-action="cancel">Cancel</button>
+        <button type="button" class="scenemap-pill-action scenemap-primary" data-layout-action="save-layout">Save</button>
       </div>
       <div class="scenemap-inline-error" hidden></div>
     </div>
@@ -980,7 +980,7 @@ function openJsonEditor(title, value, onSave) {
     if (!data || typeof data !== "object" || Array.isArray(data))
       throw new Error("JSON must be an object.");
     onSave(data);
-  }, "Save JSON");
+  }, "Save");
 }
 function openTextEditor(title, value, onSave, submitLabel = "Save") {
   const ctx = ctxRef;
@@ -991,8 +991,8 @@ function openTextEditor(title, value, onSave, submitLabel = "Save") {
     <div class="scenemap-editor">
       <textarea spellcheck="false"></textarea>
       <div class="scenemap-modal-actions">
-        <button data-modal-action="cancel">Cancel</button>
-        <button class="scenemap-primary" data-modal-action="save">${escapeHtml(submitLabel)}</button>
+        <button class="scenemap-pill-action" data-modal-action="cancel">Cancel</button>
+        <button class="scenemap-pill-action scenemap-primary" data-modal-action="save">${escapeHtml(submitLabel)}</button>
       </div>
       <div class="scenemap-inline-error" hidden></div>
     </div>
