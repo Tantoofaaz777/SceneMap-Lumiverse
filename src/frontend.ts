@@ -980,7 +980,7 @@ const styles = `
 .scenemap-section { padding: 10px 0 12px; border-bottom: 1px solid var(--lumiverse-border); }
 .scenemap-section--untitled { padding-top: 4px; }
 .scenemap-section:last-child { border-bottom: 0; }
-.scenemap-section h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 12px; text-transform: uppercase; font-weight: 800; }
+.scenemap-section h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 12px; text-align: center; text-transform: uppercase; font-weight: 800; }
 .scenemap-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .scenemap-field span { color: var(--lumiverse-text-dim); font-size: 10px; font-weight: 800; text-transform: uppercase; }
 .scenemap-field p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; }
