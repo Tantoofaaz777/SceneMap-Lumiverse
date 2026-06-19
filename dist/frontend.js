@@ -320,23 +320,15 @@ function renderDrawer() {
   rootRef.innerHTML = `
     <div class="scenemap-shell">
       <header class="scenemap-header">
-        <div class="scenemap-title">
-          <span class="scenemap-title-icon" aria-hidden="true">${iconSvg}</span>
-          <div>
-            <h2>SceneMap</h2>
-            <p>${statusText()}</p>
-          </div>
-        </div>
-        <button class="scenemap-icon-btn" data-action="refresh" title="Refresh">${refreshSvg()}</button>
-      </header>
-
-      <section class="scenemap-toolbar">
-        <button class="scenemap-primary" data-action="generate" ${state.activeMessageId ? "" : "disabled"}>
+        <button class="scenemap-pill-action scenemap-primary" data-action="generate" ${state.activeMessageId ? "" : "disabled"}>
           ${state.generatingMessageId ? "Cancel" : latest ? "Regenerate" : "Generate"}
         </button>
-        <button data-action="edit" ${latest ? "" : "disabled"}>Edit JSON</button>
-        <button data-action="delete" ${latest ? "" : "disabled"}>Delete</button>
-      </section>
+        <button class="scenemap-pill-action" data-action="edit" ${latest ? "" : "disabled"}>Edit JSON</button>
+        <button class="scenemap-pill-action" data-action="delete" ${latest ? "" : "disabled"}>Delete</button>
+        <button class="scenemap-pill-action scenemap-pill-icon" data-action="refresh" title="Refresh">${refreshSvg()}</button>
+      </header>
+
+      <p class="scenemap-status">${statusText()}</p>
 
       <section class="scenemap-card scenemap-board">
         ${latest ? renderTracker(latest.displayData ?? latest.data, settings.displayLayout) : `<div class="scenemap-empty">No tracker found for this swipe yet.</div>`}
@@ -1083,12 +1075,10 @@ var styles = `
 .scenemap-lv { height: 100%; color: var(--lumiverse-text); }
 .scenemap-settings-root { color: var(--lumiverse-text); }
 .scenemap-shell { display: flex; flex-direction: column; gap: 12px; padding: 14px; min-height: 100%; box-sizing: border-box; }
-.scenemap-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.scenemap-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.scenemap-title-icon { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); border-radius: 8px; color: var(--lumiverse-accent); }
-.scenemap-title-icon svg { width: 19px; height: 19px; }
+.scenemap-header { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; }
 .scenemap-header h2 { margin: 0; font-size: 18px; font-weight: 700; }
 .scenemap-header p { margin: 3px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; }
+.scenemap-status { margin: -4px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; text-align: center; }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scenemap-modal-spacer { flex: 1 1 auto; }
 .scenemap-card { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
@@ -1143,6 +1133,8 @@ var styles = `
 .scenemap-lv button:disabled, .scenemap-settings-root button:disabled, .scenemap-editor button:disabled, .scenemap-layout-editor button:disabled, .scenemap-name-editor button:disabled, .scenemap-float-button:disabled { opacity: 0.45; cursor: default; }
 .scenemap-lv .scenemap-primary, .scenemap-settings-root .scenemap-primary, .scenemap-editor .scenemap-primary, .scenemap-layout-editor .scenemap-primary, .scenemap-name-editor .scenemap-primary { background: var(--lumiverse-accent); color: var(--lumiverse-accent-fg); border-color: transparent; }
 .scenemap-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
+.scenemap-pill-action { border-radius: 999px !important; padding: 7px 13px !important; min-height: 34px; }
+.scenemap-pill-icon { width: 34px; min-width: 34px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: 8px; padding: 10px; font-size: 12px; }
 .scenemap-float-root { width: 100%; height: 100%; }
 .scenemap-float-button { width: 100%; height: 100%; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
