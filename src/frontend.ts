@@ -777,7 +777,7 @@ function readIndex(value: string | undefined): number | null {
 function validateLayout(layout: TrackerBoardDisplayLayout) {
   if (!layout.sections.length) throw new Error("Add at least one section.");
   for (const section of layout.sections) {
-    section.title = section.title.trim() || "Untitled";
+    section.title = section.title.trim();
     section.fields = section.fields.filter((field) => field.path.trim());
     for (const field of section.fields) {
       field.path = field.path.trim();
@@ -872,7 +872,8 @@ function renderTracker(value: unknown, layout: TrackerBoardDisplayLayout): strin
     .map((section) => {
       const fields = section.fields.map((field) => renderField(field, record)).filter(Boolean).join("");
       if (!fields) return "";
-      return `<section class="scenemap-section"><h3>${escapeHtml(section.title)}</h3><div>${fields}</div></section>`;
+      const title = section.title?.trim();
+      return `<section class="scenemap-section ${title ? "" : "scenemap-section--untitled"}">${title ? `<h3>${escapeHtml(title)}</h3>` : ""}<div>${fields}</div></section>`;
     })
     .filter(Boolean)
     .join("");
@@ -977,6 +978,7 @@ const styles = `
 .scenemap-board { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .scenemap-empty { color: var(--lumiverse-text-muted); font-size: 13px; text-align: center; padding: 20px 4px; }
 .scenemap-section { padding: 10px 0 12px; border-bottom: 1px solid var(--lumiverse-border); }
+.scenemap-section--untitled { padding-top: 4px; }
 .scenemap-section:last-child { border-bottom: 0; }
 .scenemap-section h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 12px; text-transform: uppercase; font-weight: 800; }
 .scenemap-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
