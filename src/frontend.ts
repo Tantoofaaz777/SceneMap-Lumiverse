@@ -1038,7 +1038,14 @@ const styles = `
 .scenemap-pill-icon { width: 34px; min-width: 34px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: 8px; padding: 10px; font-size: 12px; }
 @media (max-width: 760px) {
-  .scenemap-layout-section-header, .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: 1fr; }
+  .scenemap-layout-section-header { grid-template-columns: 1fr; align-items: stretch; }
+  .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: repeat(3, 36px) 1fr; align-items: center; }
+  .scenemap-layout-field-row > select:nth-child(1),
+  .scenemap-layout-field-row > input:nth-child(2),
+  .scenemap-layout-field-row > select:nth-child(3),
+  .scenemap-layout-child-row > select:nth-child(1),
+  .scenemap-layout-child-row > input:nth-child(2),
+  .scenemap-layout-child-row > select:nth-child(3) { grid-column: 1 / -1; }
   .scenemap-settings-preset-row { grid-template-columns: 1fr; align-items: stretch; }
   .scenemap-settings-actions { align-items: stretch; flex-direction: column; }
   .scenemap-settings-actions-left, .scenemap-settings-actions-right { justify-content: flex-start; }
