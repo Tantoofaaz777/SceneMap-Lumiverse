@@ -425,6 +425,12 @@ function trimMessagesForPrompt(messages, targetId, includeLastXMessages) {
     content: message.content
   }));
 }
+async function resolvePromptMessages(messages, context) {
+  return Promise.all(messages.map(async (message) => ({
+    ...message,
+    content: await resolveDisplayText(message.content, context)
+  })));
+}
 async function listConnections(userId) {
   try {
     const connections = await spindle.connections.list(userId);
@@ -458,6 +464,104 @@ async function resolveTrackerDisplayData(value, context) {
     await resolveTrackerDisplayData(child, context)
   ]));
   return Object.fromEntries(entries);
+}
+async function buildReferencePromptMessage(chat, userId) {
+  const context = {
+    chatId: chat.id,
+    characterId: chat.character_id,
+    userId
+  };
+  const sections = [
+    await buildCharacterReference(chat, userId),
+    await buildPersonaReference(userId),
+    await buildActiveWorldInfoReference(chat.id, userId)
+  ].filter(Boolean);
+  if (sections.length === 0)
+    return null;
+  const content = [
+    "SceneMap reference context for structured scene tracking.",
+    "Use this as factual background for names, identity, appearance, setting, and lore. Do not imitate the normal roleplay prompt; only use it to produce the requested tracker JSON.",
+    "",
+    ...sections
+  ].join(`
+`);
+  return {
+    role: "system",
+    content: await resolveDisplayText(content, context)
+  };
+}
+async function buildCharacterReference(chat, userId) {
+  if (!chat.character_id)
+    return null;
+  try {
+    const character = await spindle.characters.get(chat.character_id, userId);
+    if (!character)
+      return null;
+    const lines = [
+      "Character card:",
+      labeledText("Name", character.name),
+      labeledText("Description", character.description),
+      labeledText("Personality", character.personality),
+      labeledText("Scenario", character.scenario)
+    ].filter(Boolean);
+    return lines.length > 1 ? lines.join(`
+`) : null;
+  } catch (error) {
+    spindle.log.warn(`SceneMap could not read character card context: ${error.message}`);
+    return null;
+  }
+}
+async function buildPersonaReference(userId) {
+  try {
+    const persona = await spindle.personas.getActive(userId) ?? await spindle.personas.getDefault(userId);
+    if (!persona)
+      return null;
+    const lines = [
+      "Active persona:",
+      labeledText("Name", persona.name),
+      labeledText("Title", persona.title),
+      labeledText("Description", persona.description),
+      persona.is_narrator ? "Narrator: yes" : ""
+    ].filter(Boolean);
+    return lines.length > 1 ? lines.join(`
+`) : null;
+  } catch (error) {
+    spindle.log.warn(`SceneMap could not read persona context: ${error.message}`);
+    return null;
+  }
+}
+async function buildActiveWorldInfoReference(chatId, userId) {
+  try {
+    const activated = await spindle.world_books.getActivated(chatId, userId);
+    if (!activated.length)
+      return null;
+    const entries = await Promise.all(activated.map(async (entry) => {
+      const fullEntry = await spindle.world_books.entries.get(entry.id, userId);
+      const content = compactText(fullEntry?.content);
+      if (!content)
+        return "";
+      const label = compactText(entry.comment || fullEntry?.comment || entry.id);
+      const source = [entry.bookSource, entry.source].filter(Boolean).join(", ");
+      return [`- ${label}${source ? ` (${source})` : ""}:`, content].join(`
+`);
+    }));
+    const activeEntries = entries.filter(Boolean);
+    if (activeEntries.length === 0)
+      return null;
+    return ["Active world info:", ...activeEntries].join(`
+`);
+  } catch (error) {
+    spindle.log.warn(`SceneMap could not read active world info context: ${error.message}`);
+    return null;
+  }
+}
+function labeledText(label, value) {
+  const text = compactText(value);
+  return text ? `${label}: ${text}` : "";
+}
+function compactText(value) {
+  return typeof value === "string" ? value.replace(/\r\n/g, `
+`).trim() : "";
 }
 async function resolveDisplayText(text, context) {
   if (!text.includes("{{"))
@@ -551,7 +655,11 @@ async function generateTracker(messageId, userId) {
     previous_tracker: previousTracker,
     example_response: JSON.stringify(schemaToExample(preset.value), null, 2)
   });
-  const promptMessages = trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages);
+  const context = { chatId: chat.id, characterId: chat.character_id, userId };
+  const promptMessages = await resolvePromptMessages(trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages), context);
+  const referenceMessage = await buildReferencePromptMessage(chat, userId);
+  if (referenceMessage)
+    promptMessages.unshift(referenceMessage);
   promptMessages.push({ role: "user", content: finalPrompt });
   const controller = new AbortController;
   activeGenerations.set(target.id, controller);

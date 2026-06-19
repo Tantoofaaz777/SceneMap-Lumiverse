@@ -22,9 +22,17 @@ type ChatMessage = {
   metadata?: Record<string, unknown>;
 };
 
+type PromptMessage = Pick<ChatMessage, "role" | "content">;
+
 type ActiveChat = {
   id: string;
   character_id?: string | null;
+};
+
+type ReferenceContext = {
+  chatId: string;
+  characterId?: string | null;
+  userId: string;
 };
 
 type ConnectionSummary = {
@@ -110,7 +118,7 @@ function getPreviousTrackerJson(messages: ChatMessage[], currentMessageId: strin
   return "{}";
 }
 
-function trimMessagesForPrompt(messages: ChatMessage[], targetId: string, includeLastXMessages: number) {
+function trimMessagesForPrompt(messages: ChatMessage[], targetId: string, includeLastXMessages: number): PromptMessage[] {
   const targetIndex = messages.findIndex((message) => message.id === targetId);
   const end = targetIndex === -1 ? messages.length : targetIndex + 1;
   const start = includeLastXMessages > 0 ? Math.max(0, end - includeLastXMessages) : 0;
@@ -118,6 +126,13 @@ function trimMessagesForPrompt(messages: ChatMessage[], targetId: string, includ
     role: message.role,
     content: message.content,
   }));
+}
+
+async function resolvePromptMessages(messages: PromptMessage[], context: ReferenceContext): Promise<PromptMessage[]> {
+  return Promise.all(messages.map(async (message) => ({
+    ...message,
+    content: await resolveDisplayText(message.content, context),
+  })));
 }
 
 async function listConnections(userId?: string): Promise<ConnectionSummary[]> {
@@ -154,6 +169,97 @@ async function resolveTrackerDisplayData(value: unknown, context: { chatId: stri
     ] as const),
   );
   return Object.fromEntries(entries);
+}
+
+async function buildReferencePromptMessage(chat: ActiveChat, userId: string): Promise<PromptMessage | null> {
+  const context: ReferenceContext = {
+    chatId: chat.id,
+    characterId: chat.character_id,
+    userId,
+  };
+  const sections = [
+    await buildCharacterReference(chat, userId),
+    await buildPersonaReference(userId),
+    await buildActiveWorldInfoReference(chat.id, userId),
+  ].filter(Boolean) as string[];
+  if (sections.length === 0) return null;
+  const content = [
+    "SceneMap reference context for structured scene tracking.",
+    "Use this as factual background for names, identity, appearance, setting, and lore. Do not imitate the normal roleplay prompt; only use it to produce the requested tracker JSON.",
+    "",
+    ...sections,
+  ].join("\n");
+  return {
+    role: "system",
+    content: await resolveDisplayText(content, context),
+  };
+}
+
+async function buildCharacterReference(chat: ActiveChat, userId: string): Promise<string | null> {
+  if (!chat.character_id) return null;
+  try {
+    const character = await spindle.characters.get(chat.character_id, userId);
+    if (!character) return null;
+    const lines = [
+      "Character card:",
+      labeledText("Name", character.name),
+      labeledText("Description", character.description),
+      labeledText("Personality", character.personality),
+      labeledText("Scenario", character.scenario),
+    ].filter(Boolean);
+    return lines.length > 1 ? lines.join("\n") : null;
+  } catch (error) {
+    spindle.log.warn(`SceneMap could not read character card context: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+async function buildPersonaReference(userId: string): Promise<string | null> {
+  try {
+    const persona = await spindle.personas.getActive(userId) ?? await spindle.personas.getDefault(userId);
+    if (!persona) return null;
+    const lines = [
+      "Active persona:",
+      labeledText("Name", persona.name),
+      labeledText("Title", persona.title),
+      labeledText("Description", persona.description),
+      persona.is_narrator ? "Narrator: yes" : "",
+    ].filter(Boolean);
+    return lines.length > 1 ? lines.join("\n") : null;
+  } catch (error) {
+    spindle.log.warn(`SceneMap could not read persona context: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+async function buildActiveWorldInfoReference(chatId: string, userId: string): Promise<string | null> {
+  try {
+    const activated = await spindle.world_books.getActivated(chatId, userId);
+    if (!activated.length) return null;
+    const entries = await Promise.all(activated.map(async (entry: any) => {
+      const fullEntry = await spindle.world_books.entries.get(entry.id, userId);
+      const content = compactText(fullEntry?.content);
+      if (!content) return "";
+      const label = compactText(entry.comment || fullEntry?.comment || entry.id);
+      const source = [entry.bookSource, entry.source].filter(Boolean).join(", ");
+      return [`- ${label}${source ? ` (${source})` : ""}:`, content].join("\n");
+    }));
+    const activeEntries = entries.filter(Boolean);
+    if (activeEntries.length === 0) return null;
+    return ["Active world info:", ...activeEntries].join("\n");
+  } catch (error) {
+    spindle.log.warn(`SceneMap could not read active world info context: ${(error as Error).message}`);
+    return null;
+  }
+}
+
+function labeledText(label: string, value: unknown): string {
+  const text = compactText(value);
+  return text ? `${label}: ${text}` : "";
+}
+
+function compactText(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\r\n/g, "\n").trim() : "";
 }
 
 async function resolveDisplayText(text: string, context: { chatId: string; characterId?: string | null; userId: string }): Promise<string> {
@@ -249,7 +355,10 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
     previous_tracker: previousTracker,
     example_response: JSON.stringify(schemaToExample(preset.value), null, 2),
   });
-  const promptMessages = trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages);
+  const context = { chatId: chat.id, characterId: chat.character_id, userId };
+  const promptMessages = await resolvePromptMessages(trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages), context);
+  const referenceMessage = await buildReferencePromptMessage(chat, userId);
+  if (referenceMessage) promptMessages.unshift(referenceMessage);
   promptMessages.push({ role: "user", content: finalPrompt });
 
   const controller = new AbortController();
