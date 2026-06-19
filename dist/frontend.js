@@ -339,9 +339,10 @@ function renderSettings() {
           ${state.connections.map((conn) => `<option value="${escapeAttr(conn.id)}" ${settings.connectionId === conn.id ? "selected" : ""}>${escapeHtml(conn.name)} (${escapeHtml(conn.model || conn.provider)})${conn.is_default ? " - default" : ""}</option>`).join("")}
         </select>
       </label>
-      <label class="scenemap-check">
-        <input type="checkbox" data-setting="autoGenerateAiTrackers" ${settings.autoGenerateAiTrackers ? "checked" : ""}>
+      <label class="scenemap-switch-row">
         <span>Auto-generate after assistant replies</span>
+        <input type="checkbox" data-setting="autoGenerateAiTrackers" ${settings.autoGenerateAiTrackers ? "checked" : ""}>
+        <span class="scenemap-switch" aria-hidden="true"></span>
       </label>
       <label>
         <span>Max response tokens</span>
@@ -1243,7 +1244,12 @@ var styles = `
 .scenemap-settings-heading h3 { margin: 0; font-size: 15px; font-weight: 800; }
 .scenemap-settings { background: transparent; border-color: transparent; padding: 0; }
 .scenemap-settings label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
-.scenemap-settings .scenemap-check { flex-direction: row; align-items: center; color: var(--lumiverse-text); }
+.scenemap-settings .scenemap-switch-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; color: var(--lumiverse-text); border-top: 1px solid var(--lumiverse-border); border-bottom: 1px solid var(--lumiverse-border); padding: 9px 0; }
+.scenemap-switch-row input { position: absolute; opacity: 0; pointer-events: none; }
+.scenemap-switch { position: relative; width: 32px; height: 18px; flex: 0 0 auto; border-radius: 999px; background: var(--lumiverse-fill); border: 1px solid var(--lumiverse-border-hover); transition: background .16s ease, border-color .16s ease; }
+.scenemap-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--lumiverse-text-muted); transition: transform .16s ease, background .16s ease; }
+.scenemap-switch-row input:checked + .scenemap-switch { background: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
+.scenemap-switch-row input:checked + .scenemap-switch::after { transform: translateX(14px); background: var(--lumiverse-primary-contrast, #fff); }
 .scenemap-settings-preset-row { display: grid; grid-template-columns: minmax(220px, 1fr) repeat(5, auto); gap: 8px; align-items: end; }
 .scenemap-settings-preset-row label { margin: 10px 0 0; min-width: 0; }
 .scenemap-settings-preset-row .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-width: 56px; padding: 6px 11px !important; min-height: 32px; }
