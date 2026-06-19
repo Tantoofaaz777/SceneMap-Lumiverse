@@ -320,9 +320,12 @@ function renderDrawer() {
   rootRef.innerHTML = `
     <div class="scenemap-shell">
       <header class="scenemap-header">
-        <div>
-          <h2>SceneMap</h2>
-          <p>${statusText()}</p>
+        <div class="scenemap-title">
+          <span class="scenemap-title-icon" aria-hidden="true">${iconSvg}</span>
+          <div>
+            <h2>SceneMap</h2>
+            <p>${statusText()}</p>
+          </div>
         </div>
         <button class="scenemap-icon-btn" data-action="refresh" title="Refresh">${refreshSvg()}</button>
       </header>
@@ -1081,6 +1084,9 @@ var styles = `
 .scenemap-settings-root { color: var(--lumiverse-text); }
 .scenemap-shell { display: flex; flex-direction: column; gap: 12px; padding: 14px; min-height: 100%; box-sizing: border-box; }
 .scenemap-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.scenemap-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.scenemap-title-icon { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); border-radius: 8px; color: var(--lumiverse-accent); }
+.scenemap-title-icon svg { width: 19px; height: 19px; }
 .scenemap-header h2 { margin: 0; font-size: 18px; font-weight: 700; }
 .scenemap-header p { margin: 3px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
