@@ -20,6 +20,7 @@ let state: SceneMapState = {
   latest: null,
   messagesBehind: 0,
   activeMessageId: null,
+  activeSwipeId: null,
   generatingMessageId: null,
   connections: [],
 };
@@ -93,6 +94,7 @@ export function setup(ctx: SpindleFrontendContext) {
     ctx.events.on("MESSAGE_EDITED", () => requestState()),
     ctx.events.on("MESSAGE_DELETED", () => requestState()),
     ctx.events.on("MESSAGE_SWIPED", () => requestState()),
+    ctx.events.on("SWIPE_EDITED", () => requestState()),
     ctx.events.on("GENERATION_ENDED", (payload: any) => {
       if (state.settings.autoGenerateAiTrackers && payload?.messageId && !payload?.error) {
         send({ type: "generate_tracker", messageId: payload.messageId });
@@ -169,7 +171,7 @@ function renderDrawer() {
       </section>
 
       <section class="scenemap-card scenemap-board">
-        ${latest ? renderTracker(latest.displayData ?? latest.data, settings.displayLayout) : `<div class="scenemap-empty">No tracker found for this chat yet.</div>`}
+        ${latest ? renderTracker(latest.displayData ?? latest.data, settings.displayLayout) : `<div class="scenemap-empty">No tracker found for this swipe yet.</div>`}
       </section>
     </div>
   `;

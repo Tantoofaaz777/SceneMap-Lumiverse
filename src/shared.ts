@@ -41,6 +41,7 @@ export interface SceneMapSettings {
 
 export interface TrackerEntry {
   messageId: string;
+  swipeId: number;
   data: unknown;
   displayData?: unknown;
 }
@@ -51,6 +52,7 @@ export interface SceneMapState {
   latest: TrackerEntry | null;
   messagesBehind: number;
   activeMessageId: string | null;
+  activeSwipeId: number | null;
   generatingMessageId: string | null;
   connections: Array<{ id: string; name: string; provider: string; model: string; is_default?: boolean }>;
 }

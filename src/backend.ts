@@ -19,6 +19,8 @@ type ChatMessage = {
   id: string;
   role: "system" | "user" | "assistant";
   content: string;
+  swipe_id?: number;
+  swipes?: string[];
   metadata?: Record<string, unknown>;
 };
 
@@ -58,25 +60,86 @@ async function saveSettings(settings: SceneMapSettings, userId: string) {
   await spindle.userStorage.setJson(SETTINGS_PATH, mergeSettings(settings), { indent: 2, userId });
 }
 
-function getMessageTracker(message: ChatMessage | null | undefined): unknown | null {
+function getActiveSwipeId(message: ChatMessage | null | undefined): number {
+  return typeof message?.swipe_id === "number" && Number.isFinite(message.swipe_id) ? message.swipe_id : 0;
+}
+
+function getTrackerStore(message: ChatMessage | null | undefined): Record<string, unknown> | null {
   const data = message?.metadata?.[MESSAGE_METADATA_KEY];
   if (!data || typeof data !== "object") return null;
-  return (data as Record<string, unknown>).value ?? null;
+  return data as Record<string, unknown>;
+}
+
+function getTrackerFromStore(store: Record<string, unknown> | null, swipeId: number): unknown | null {
+  if (!store) return null;
+  const swipes = store.swipes;
+  if (swipes && typeof swipes === "object" && !Array.isArray(swipes)) {
+    const item = (swipes as Record<string, unknown>)[String(swipeId)];
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      return (item as Record<string, unknown>).value ?? null;
+    }
+  }
+
+  if ("value" in store) {
+    const legacySwipeId = store.swipeId;
+    if (typeof legacySwipeId !== "number" || legacySwipeId === swipeId) return store.value ?? null;
+  }
+  return null;
+}
+
+function getMessageTracker(message: ChatMessage | null | undefined): unknown | null {
+  return getTrackerFromStore(getTrackerStore(message), getActiveSwipeId(message));
 }
 
 function withTrackerMetadata(message: ChatMessage, data: unknown): Record<string, unknown> {
+  const now = new Date().toISOString();
+  const swipeId = getActiveSwipeId(message);
+  const existing = getTrackerStore(message);
+  const swipes = existing?.swipes && typeof existing.swipes === "object" && !Array.isArray(existing.swipes)
+    ? { ...(existing.swipes as Record<string, unknown>) }
+    : {};
+  if (existing && "value" in existing) {
+    const legacySwipeId = typeof existing.swipeId === "number" ? existing.swipeId : swipeId;
+    swipes[String(legacySwipeId)] ??= {
+      value: existing.value,
+      updatedAt: typeof existing.updatedAt === "string" ? existing.updatedAt : now,
+    };
+  }
+  swipes[String(swipeId)] = { value: data, updatedAt: now };
   return {
     ...(message.metadata ?? {}),
     [MESSAGE_METADATA_KEY]: {
-      value: data,
-      updatedAt: new Date().toISOString(),
+      version: 2,
+      swipes,
+      updatedAt: now,
     },
   };
 }
 
 function withoutTrackerMetadata(message: ChatMessage): Record<string, unknown> {
   const next = { ...(message.metadata ?? {}) };
-  delete next[MESSAGE_METADATA_KEY];
+  const existing = getTrackerStore(message);
+  const swipeId = getActiveSwipeId(message);
+  const swipes = existing?.swipes && typeof existing.swipes === "object" && !Array.isArray(existing.swipes)
+    ? { ...(existing.swipes as Record<string, unknown>) }
+    : {};
+  if (existing && "value" in existing) {
+    const legacySwipeId = typeof existing.swipeId === "number" ? existing.swipeId : swipeId;
+    swipes[String(legacySwipeId)] ??= {
+      value: existing.value,
+      updatedAt: typeof existing.updatedAt === "string" ? existing.updatedAt : new Date().toISOString(),
+    };
+  }
+  delete swipes[String(swipeId)];
+  if (Object.keys(swipes).length === 0) {
+    delete next[MESSAGE_METADATA_KEY];
+  } else {
+    next[MESSAGE_METADATA_KEY] = {
+      version: 2,
+      swipes,
+      updatedAt: new Date().toISOString(),
+    };
+  }
   return next;
 }
 
@@ -84,7 +147,7 @@ function getLatestTrackerEntry(messages: ChatMessage[]): TrackerEntry | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i].role !== "assistant") continue;
     const data = getMessageTracker(messages[i]);
-    if (data) return { messageId: messages[i].id, data };
+    if (data) return { messageId: messages[i].id, swipeId: getActiveSwipeId(messages[i]), data };
   }
   return null;
 }
@@ -273,6 +336,7 @@ async function buildState(userId: string): Promise<SceneMapState> {
   const settings = await loadSettings(userId);
   const { chat, messages } = await getActiveContext(userId);
   const latest = getLatestTrackerEntry(messages);
+  const activeMessage = findTargetMessage(messages);
   if (latest && chat) {
     latest.displayData = await resolveTrackerDisplayData(latest.data, {
       chatId: chat.id,
@@ -285,7 +349,8 @@ async function buildState(userId: string): Promise<SceneMapState> {
     chatId: chat?.id ?? null,
     latest,
     messagesBehind: latest ? countAssistantMessagesAfter(messages, latest.messageId) : 0,
-    activeMessageId: findTargetMessage(messages)?.id ?? null,
+    activeMessageId: activeMessage?.id ?? null,
+    activeSwipeId: activeMessage ? getActiveSwipeId(activeMessage) : null,
     generatingMessageId: [...activeGenerations.keys()][0] ?? null,
     connections: await listConnections(userId),
   };

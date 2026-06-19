@@ -356,24 +356,79 @@ async function loadSettings(userId) {
 async function saveSettings(settings, userId) {
   await spindle.userStorage.setJson(SETTINGS_PATH, mergeSettings(settings), { indent: 2, userId });
 }
-function getMessageTracker(message) {
+function getActiveSwipeId(message) {
+  return typeof message?.swipe_id === "number" && Number.isFinite(message.swipe_id) ? message.swipe_id : 0;
+}
+function getTrackerStore(message) {
   const data = message?.metadata?.[MESSAGE_METADATA_KEY];
   if (!data || typeof data !== "object")
     return null;
-  return data.value ?? null;
+  return data;
+}
+function getTrackerFromStore(store, swipeId) {
+  if (!store)
+    return null;
+  const swipes = store.swipes;
+  if (swipes && typeof swipes === "object" && !Array.isArray(swipes)) {
+    const item = swipes[String(swipeId)];
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      return item.value ?? null;
+    }
+  }
+  if ("value" in store) {
+    const legacySwipeId = store.swipeId;
+    if (typeof legacySwipeId !== "number" || legacySwipeId === swipeId)
+      return store.value ?? null;
+  }
+  return null;
+}
+function getMessageTracker(message) {
+  return getTrackerFromStore(getTrackerStore(message), getActiveSwipeId(message));
 }
 function withTrackerMetadata(message, data) {
+  const now = new Date().toISOString();
+  const swipeId = getActiveSwipeId(message);
+  const existing = getTrackerStore(message);
+  const swipes = existing?.swipes && typeof existing.swipes === "object" && !Array.isArray(existing.swipes) ? { ...existing.swipes } : {};
+  if (existing && "value" in existing) {
+    const legacySwipeId = typeof existing.swipeId === "number" ? existing.swipeId : swipeId;
+    swipes[String(legacySwipeId)] ??= {
+      value: existing.value,
+      updatedAt: typeof existing.updatedAt === "string" ? existing.updatedAt : now
+    };
+  }
+  swipes[String(swipeId)] = { value: data, updatedAt: now };
   return {
     ...message.metadata ?? {},
     [MESSAGE_METADATA_KEY]: {
-      value: data,
-      updatedAt: new Date().toISOString()
+      version: 2,
+      swipes,
+      updatedAt: now
     }
   };
 }
 function withoutTrackerMetadata(message) {
   const next = { ...message.metadata ?? {} };
-  delete next[MESSAGE_METADATA_KEY];
+  const existing = getTrackerStore(message);
+  const swipeId = getActiveSwipeId(message);
+  const swipes = existing?.swipes && typeof existing.swipes === "object" && !Array.isArray(existing.swipes) ? { ...existing.swipes } : {};
+  if (existing && "value" in existing) {
+    const legacySwipeId = typeof existing.swipeId === "number" ? existing.swipeId : swipeId;
+    swipes[String(legacySwipeId)] ??= {
+      value: existing.value,
+      updatedAt: typeof existing.updatedAt === "string" ? existing.updatedAt : new Date().toISOString()
+    };
+  }
+  delete swipes[String(swipeId)];
+  if (Object.keys(swipes).length === 0) {
+    delete next[MESSAGE_METADATA_KEY];
+  } else {
+    next[MESSAGE_METADATA_KEY] = {
+      version: 2,
+      swipes,
+      updatedAt: new Date().toISOString()
+    };
+  }
   return next;
 }
 function getLatestTrackerEntry(messages) {
@@ -382,7 +437,7 @@ function getLatestTrackerEntry(messages) {
       continue;
     const data = getMessageTracker(messages[i]);
     if (data)
-      return { messageId: messages[i].id, data };
+      return { messageId: messages[i].id, swipeId: getActiveSwipeId(messages[i]), data };
   }
   return null;
 }
@@ -575,6 +630,7 @@ async function buildState(userId) {
   const settings = await loadSettings(userId);
   const { chat, messages } = await getActiveContext(userId);
   const latest = getLatestTrackerEntry(messages);
+  const activeMessage = findTargetMessage(messages);
   if (latest && chat) {
     latest.displayData = await resolveTrackerDisplayData(latest.data, {
       chatId: chat.id,
@@ -587,7 +643,8 @@ async function buildState(userId) {
     chatId: chat?.id ?? null,
     latest,
     messagesBehind: latest ? countAssistantMessagesAfter(messages, latest.messageId) : 0,
-    activeMessageId: findTargetMessage(messages)?.id ?? null,
+    activeMessageId: activeMessage?.id ?? null,
+    activeSwipeId: activeMessage ? getActiveSwipeId(activeMessage) : null,
     generatingMessageId: [...activeGenerations.keys()][0] ?? null,
     connections: await listConnections(userId)
   };
