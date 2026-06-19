@@ -34,14 +34,15 @@ const activeGenerations = new Map<string, AbortController>();
 
 async function loadSettings(userId?: string): Promise<SceneMapSettings> {
   return mergeSettings(
-    await spindle.storage.getJson<Partial<SceneMapSettings>>(SETTINGS_PATH, {
+    await spindle.userStorage.getJson<Partial<SceneMapSettings>>(SETTINGS_PATH, {
       fallback: defaultSettings,
+      userId,
     }),
   );
 }
 
-async function saveSettings(settings: SceneMapSettings) {
-  await spindle.storage.setJson(SETTINGS_PATH, mergeSettings(settings), { indent: 2 });
+async function saveSettings(settings: SceneMapSettings, userId: string) {
+  await spindle.userStorage.setJson(SETTINGS_PATH, mergeSettings(settings), { indent: 2, userId });
 }
 
 function getMessageTracker(message: ChatMessage | null | undefined): unknown | null {
@@ -193,7 +194,7 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
     activeGenerations.get(target.id)?.abort();
     activeGenerations.delete(target.id);
     if (userId) await pushState(userId);
-    spindle.toast.info("SceneMap generation cancelled.");
+    spindle.toast.info("SceneMap generation cancelled.", { userId });
     return;
   }
 
@@ -214,22 +215,22 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
   if (userId) await pushState(userId);
 
   try {
-    const result = await spindle.generate.quiet({
+    const result = await (spindle.generate.quiet as any)({
       messages: promptMessages,
       connection_id: settings.connectionId || undefined,
       parameters: {
         max_tokens: Math.max(1, Math.floor(settings.maxResponseTokens || 16000)),
       },
       signal: controller.signal,
-    });
+    }, userId);
     const parsed = parseModelJson(result.content);
-    await spindle.chat.updateMessage(chat.id, target.id, {
+    await (spindle.chat.updateMessage as any)(chat.id, target.id, {
       metadata: withTrackerMetadata(target, parsed),
-    });
-    spindle.toast.success("Tracker updated.", { title: "SceneMap" });
+    }, userId);
+    spindle.toast.success("Tracker updated.", { title: "SceneMap", userId });
   } catch (error) {
     if ((error as Error).name !== "AbortError") {
-      spindle.toast.error((error as Error).message, { title: "SceneMap generation failed", duration: 10000 });
+      spindle.toast.error((error as Error).message, { title: "SceneMap generation failed", duration: 10000, userId });
       throw error;
     }
   } finally {
@@ -246,10 +247,10 @@ async function editTracker(messageId: string, data: unknown, userId?: string) {
   const message = messages.find((item) => item.id === messageId);
   if (!message) throw new Error("Message not found.");
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Tracker data must be a JSON object.");
-  await spindle.chat.updateMessage(chat.id, messageId, {
+  await (spindle.chat.updateMessage as any)(chat.id, messageId, {
     metadata: withTrackerMetadata(message, data),
-  });
-  spindle.toast.success("Tracker saved.", { title: "SceneMap" });
+  }, userId);
+  spindle.toast.success("Tracker saved.", { title: "SceneMap", userId });
   if (userId) await pushState(userId);
   else await refreshMacroValue();
 }
@@ -268,10 +269,10 @@ async function deleteTracker(messageId: string, userId?: string) {
     userId,
   });
   if (!confirmed) return;
-  await spindle.chat.updateMessage(chat.id, messageId, {
+  await (spindle.chat.updateMessage as any)(chat.id, messageId, {
     metadata: withoutTrackerMetadata(message),
-  });
-  spindle.toast.success("Tracker deleted.", { title: "SceneMap" });
+  }, userId);
+  spindle.toast.success("Tracker deleted.", { title: "SceneMap", userId });
   if (userId) await pushState(userId);
   else await refreshMacroValue();
 }
@@ -292,16 +293,16 @@ spindle.onFrontendMessage(async (payload: any, userId?: string) => {
         await pushState(userId);
         break;
       case "save_settings":
-        await saveSettings(payload.settings);
+        await saveSettings(payload.settings, userId);
         await pushState(userId);
-        spindle.toast.success("Settings saved.", { title: "SceneMap" });
+        spindle.toast.success("Settings saved.", { title: "SceneMap", userId });
         break;
       case "set_chat_preset": {
         const { chat } = await getActiveContext(userId);
         if (!chat) throw new Error("Open a chat before setting a chat preset.");
         await updateChatPreset(chat.id, payload.presetKey, userId);
         await pushState(userId);
-        spindle.toast.success("Chat preset updated.", { title: "SceneMap" });
+        spindle.toast.success("Chat preset updated.", { title: "SceneMap", userId });
         break;
       }
       case "generate_tracker":
@@ -316,7 +317,7 @@ spindle.onFrontendMessage(async (payload: any, userId?: string) => {
     }
   } catch (error) {
     spindle.sendToFrontend({ type: "error", message: (error as Error).message }, userId);
-    spindle.toast.error((error as Error).message, { title: "SceneMap", duration: 9000 });
+    spindle.toast.error((error as Error).message, { title: "SceneMap", duration: 9000, userId });
   }
 });
 
@@ -326,15 +327,7 @@ spindle.on("MESSAGE_DELETED", () => {});
 spindle.on("MESSAGE_SWIPED", () => {});
 spindle.on("GENERATION_ENDED", (payload: any) => {
   if (payload?.error || !payload?.messageId) return;
-  void (async () => {
-    try {
-      const settings = await loadSettings();
-      if (!settings.autoGenerateAiTrackers) return;
-      spindle.log.warn("SceneMap auto-generation skipped: generation event does not include a frontend user context.");
-    } catch (error) {
-      spindle.log.error(`SceneMap auto-generation failed: ${(error as Error).message}`);
-    }
-  })();
+  spindle.log.warn("SceneMap auto-generation skipped: generation event does not include a frontend user context.");
 });
 
 void refreshMacroValue();
