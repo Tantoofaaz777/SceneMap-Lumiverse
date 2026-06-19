@@ -549,7 +549,7 @@ async function buildCharacterReference(chat, userId) {
     if (!character)
       return null;
     const lines = [
-      `${compactText(character.name) || "Character"}:`,
+      `${getEffectiveCharacterName(character)}:`,
       labeledText("Description", character.description),
       labeledText("Personality", character.personality),
       labeledText("Scenario", character.scenario)
@@ -605,6 +605,9 @@ async function buildActiveWorldInfoReference(chatId, userId) {
 function labeledText(label, value) {
   const text = compactText(value);
   return text ? `${label}: ${text}` : "";
+}
+function getEffectiveCharacterName(character) {
+  return compactText(character.extensions?.alternate_character_name) || compactText(character.name) || "Character";
 }
 function compactText(value) {
   return typeof value === "string" ? value.replace(/\r\n/g, `

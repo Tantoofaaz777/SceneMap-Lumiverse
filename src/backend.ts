@@ -259,7 +259,7 @@ async function buildCharacterReference(chat: ActiveChat, userId: string): Promis
     const character = await spindle.characters.get(chat.character_id, userId);
     if (!character) return null;
     const lines = [
-      `${compactText(character.name) || "Character"}:`,
+      `${getEffectiveCharacterName(character)}:`,
       labeledText("Description", character.description),
       labeledText("Personality", character.personality),
       labeledText("Scenario", character.scenario),
@@ -310,6 +310,10 @@ async function buildActiveWorldInfoReference(chatId: string, userId: string): Pr
 function labeledText(label: string, value: unknown): string {
   const text = compactText(value);
   return text ? `${label}: ${text}` : "";
+}
+
+function getEffectiveCharacterName(character: { name?: unknown; extensions?: Record<string, unknown> }): string {
+  return compactText(character.extensions?.alternate_character_name) || compactText(character.name) || "Character";
 }
 
 function compactText(value: unknown): string {
