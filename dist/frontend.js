@@ -323,8 +323,8 @@ function renderDrawer() {
         <button class="scenemap-pill-action scenemap-primary" data-action="generate" ${state.activeMessageId ? "" : "disabled"}>
           ${state.generatingMessageId ? "Cancel" : latest ? "Regenerate" : "Generate"}
         </button>
-        <button class="scenemap-pill-action" data-action="edit" ${latest ? "" : "disabled"}>Edit JSON</button>
-        <button class="scenemap-pill-action" data-action="delete" ${latest ? "" : "disabled"}>Delete</button>
+        <button class="scenemap-pill-action" data-action="edit" ${latest ? "" : "disabled"}>Edit</button>
+        <button class="scenemap-pill-action scenemap-danger" data-action="delete" ${latest ? "" : "disabled"}>Delete</button>
         <button class="scenemap-pill-action scenemap-pill-icon" data-action="refresh" title="Refresh">${refreshSvg()}</button>
       </header>
 
@@ -397,7 +397,7 @@ function statusText() {
     return "This scene is unmapped";
   if (state.messagesBehind > 0)
     return `SceneMap is ${state.messagesBehind} message${state.messagesBehind === 1 ? "" : "s"} behind`;
-  return "SceneMap is current";
+  return "SceneMap is updated";
 }
 function statusMarkup() {
   if (!state.generatingMessageId)
@@ -1140,7 +1140,10 @@ var styles = `
 .scenemap-lv button, .scenemap-settings-root button, .scenemap-editor button, .scenemap-layout-editor button, .scenemap-name-editor button, .scenemap-float-button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
 .scenemap-lv button:hover:not(:disabled), .scenemap-settings-root button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-layout-editor button:hover:not(:disabled), .scenemap-name-editor button:hover:not(:disabled), .scenemap-float-button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
 .scenemap-lv button:disabled, .scenemap-settings-root button:disabled, .scenemap-editor button:disabled, .scenemap-layout-editor button:disabled, .scenemap-name-editor button:disabled, .scenemap-float-button:disabled { opacity: 0.45; cursor: default; }
-.scenemap-lv .scenemap-primary, .scenemap-settings-root .scenemap-primary, .scenemap-editor .scenemap-primary, .scenemap-layout-editor .scenemap-primary, .scenemap-name-editor .scenemap-primary { background: var(--lumiverse-accent); color: var(--lumiverse-accent-fg); border-color: transparent; }
+.scenemap-lv .scenemap-primary, .scenemap-settings-root .scenemap-primary, .scenemap-editor .scenemap-primary, .scenemap-layout-editor .scenemap-primary, .scenemap-name-editor .scenemap-primary { background: var(--lumiverse-primary, var(--lumiverse-accent)); color: var(--lumiverse-primary-contrast, var(--lumiverse-accent-fg)); border-color: transparent; }
+.scenemap-lv .scenemap-primary:hover:not(:disabled), .scenemap-settings-root .scenemap-primary:hover:not(:disabled), .scenemap-editor .scenemap-primary:hover:not(:disabled), .scenemap-layout-editor .scenemap-primary:hover:not(:disabled), .scenemap-name-editor .scenemap-primary:hover:not(:disabled) { background: var(--lumiverse-primary-hover, var(--lumiverse-accent)); border-color: transparent; }
+.scenemap-lv .scenemap-danger { background: var(--lumiverse-danger, #ef4444); color: #fff; border-color: transparent; }
+.scenemap-lv .scenemap-danger:hover:not(:disabled) { background: var(--lumiverse-danger-hover, #dc2626); border-color: transparent; }
 .scenemap-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
 .scenemap-pill-action { border-radius: 999px !important; padding: 7px 13px !important; min-height: 34px; }
 .scenemap-pill-icon { width: 34px; min-width: 34px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; }
