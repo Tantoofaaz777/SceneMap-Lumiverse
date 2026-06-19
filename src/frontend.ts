@@ -201,6 +201,8 @@ function renderSettings() {
         </label>
         <button class="scenemap-pill-action" data-action="create-preset">${layoutIcon("plus")} New</button>
         <button class="scenemap-pill-action" data-action="rename-preset">Rename</button>
+        <button class="scenemap-pill-action" data-action="import-preset">Import</button>
+        <button class="scenemap-pill-action" data-action="export-preset">Export</button>
         <button class="scenemap-pill-action scenemap-danger" data-action="delete-preset" ${canDeletePreset ? "" : "disabled"}>Delete</button>
       </div>
       <div class="scenemap-settings-actions">
@@ -244,6 +246,8 @@ function handleClick(event: Event) {
   if (action === "delete" && state.latest) send({ type: "delete_tracker", messageId: state.latest.messageId });
   if (action === "create-preset") createPreset();
   if (action === "rename-preset") renamePreset();
+  if (action === "import-preset") void importPreset();
+  if (action === "export-preset") exportPreset();
   if (action === "delete-preset") deletePreset();
   if (action === "edit-schema") editActiveSchema();
   if (action === "edit-prompt") editPrompt();
@@ -326,6 +330,105 @@ async function deletePreset() {
   const fallbackKey = settings.schemaPresets.default ? "default" : Object.keys(settings.schemaPresets)[0];
   state = { ...state, settings: { ...settings, schemaPreset: fallbackKey } };
   render();
+}
+
+function exportPreset() {
+  const settings = mergeSettings(state.settings);
+  const preset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  const data = {
+    type: "scenemap-preset",
+    version: 1,
+    name: preset.name,
+    schema: preset.value,
+    prompt: settings.promptJson,
+    layout: settings.displayLayout,
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${slugifyPresetName(preset.name)}.scenemap-preset.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function importPreset() {
+  const ctx = ctxRef as (SpindleFrontendContext & { uploads?: { pickFile?: (options: Record<string, unknown>) => Promise<Array<{ name: string; bytes: Uint8Array }>> } }) | null;
+  if (!ctx?.uploads?.pickFile) {
+    showSettingsError("File import is not available in this Lumiverse build.");
+    return;
+  }
+  try {
+    const files = await ctx.uploads.pickFile({
+      accept: [".json", "application/json"],
+      multiple: false,
+      maxSizeBytes: 512_000,
+    });
+    const file = files?.[0];
+    if (!file) return;
+    const text = new TextDecoder().decode(file.bytes);
+    const imported = parsePresetImport(JSON.parse(text), file.name);
+    openNameEditor("Import Preset", imported.name, "Import", (name) => {
+      const settings = mergeSettings(state.settings);
+      const key = uniquePresetKey(slugifyPresetName(name), settings.schemaPresets);
+      settings.schemaPresets[key] = { name, value: imported.schema };
+      settings.schemaPreset = key;
+      settings.promptJson = imported.prompt;
+      settings.displayLayout = imported.layout;
+      state = { ...state, settings };
+      render();
+    });
+  } catch (err) {
+    showSettingsError((err as Error).message || "Could not import preset.");
+  }
+}
+
+function parsePresetImport(value: unknown, filename: string): { name: string; schema: Record<string, unknown>; prompt: string; layout: TrackerBoardDisplayLayout } {
+  const record = getRecord(value);
+  if (record.type !== "scenemap-preset") throw new Error("This is not a SceneMap preset file.");
+  const schema = getRecord(record.schema);
+  if (Object.keys(schema).length === 0) throw new Error("Preset file is missing a schema object.");
+  if (typeof record.prompt !== "string") throw new Error("Preset file is missing a prompt string.");
+  const layout = normalizeImportedLayout(record.layout);
+  validateLayout(layout);
+  return {
+    name: typeof record.name === "string" && record.name.trim() ? record.name.trim() : filename.replace(/\.json$/i, "").replace(/\.scenemap-preset$/i, ""),
+    schema,
+    prompt: record.prompt,
+    layout,
+  };
+}
+
+function normalizeImportedLayout(value: unknown): TrackerBoardDisplayLayout {
+  const record = getRecord(value);
+  if (!Array.isArray(record.sections)) throw new Error("Preset file is missing a layout sections array.");
+  return {
+    sections: record.sections.map((section) => {
+      const sectionRecord = getRecord(section);
+      if (!Array.isArray(sectionRecord.fields)) throw new Error("Every layout section must include a fields array.");
+      return {
+        title: typeof sectionRecord.title === "string" ? sectionRecord.title : "",
+        fields: sectionRecord.fields.map(normalizeImportedField),
+      };
+    }),
+  };
+}
+
+function normalizeImportedField(value: unknown): TrackerBoardField {
+  const record = getRecord(value);
+  const display = typeof record.display === "string" && isTrackerFieldDisplay(record.display) ? record.display : "text";
+  return {
+    path: typeof record.path === "string" ? record.path : "",
+    label: typeof record.label === "string" ? record.label : undefined,
+    display,
+    fields: Array.isArray(record.fields) ? record.fields.map(normalizeImportedField) : undefined,
+  };
+}
+
+function isTrackerFieldDisplay(value: string): value is TrackerFieldDisplay {
+  return ["text", "subtle", "mono", "chips", "character_cards"].includes(value);
 }
 
 function openNameEditor(title: string, initialValue: string, submitLabel: string, onSave: (name: string) => void) {
@@ -864,6 +967,16 @@ function showInlineError(message: string) {
   rootRef.prepend(node);
 }
 
+function showSettingsError(message: string) {
+  if (!settingsRootRef) return;
+  const existing = settingsRootRef.querySelector(".scenemap-runtime-error");
+  existing?.remove();
+  const node = document.createElement("div");
+  node.className = "scenemap-runtime-error";
+  node.textContent = message;
+  settingsRootRef.prepend(node);
+}
+
 function renderTracker(value: unknown, layout: TrackerBoardDisplayLayout): string {
   const record = getRecord(value);
   if (Object.keys(record).length === 0) return `<div class="scenemap-empty">Tracker data is empty.</div>`;
@@ -995,7 +1108,7 @@ const styles = `
 .scenemap-settings-heading h3 { margin: 0; font-size: 15px; font-weight: 800; }
 .scenemap-settings label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
 .scenemap-settings .scenemap-check { flex-direction: row; align-items: center; color: var(--lumiverse-text); }
-.scenemap-settings-preset-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto auto auto; gap: 8px; align-items: end; }
+.scenemap-settings-preset-row { display: grid; grid-template-columns: minmax(220px, 1fr) repeat(5, auto); gap: 8px; align-items: end; }
 .scenemap-settings-preset-row label { margin: 10px 0 0; min-width: 0; }
 .scenemap-settings-preset-row .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-width: 68px; }
 .scenemap-settings-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }

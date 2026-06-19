@@ -148,7 +148,7 @@ EXAMPLE OF A PERFECT RESPONSE:
 {{example_response}}
 \`\`\``;
 var defaultSettings = {
-  version: "1.0.0",
+  version: "1.0.1",
   formatVersion: "F_1.0",
   connectionId: "",
   maxResponseTokens: 16000,
