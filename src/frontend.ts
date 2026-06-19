@@ -199,7 +199,7 @@ function renderSettings() {
               .join("")}
           </select>
         </label>
-        <button class="scenemap-pill-action" data-action="create-preset">${layoutIcon("plus")} New</button>
+        <button class="scenemap-pill-action" data-action="create-preset">New</button>
         <button class="scenemap-pill-action" data-action="rename-preset">Rename</button>
         <button class="scenemap-pill-action" data-action="import-preset">Import</button>
         <button class="scenemap-pill-action" data-action="export-preset">Export</button>
@@ -1106,13 +1106,15 @@ const styles = `
 .scenemap-character h4 { margin: 0 0 10px; color: var(--lumiverse-text); font-size: 14px; font-weight: 750; }
 .scenemap-settings-heading { margin-bottom: 12px; }
 .scenemap-settings-heading h3 { margin: 0; font-size: 15px; font-weight: 800; }
+.scenemap-settings { background: transparent; border-color: transparent; padding: 0; }
 .scenemap-settings label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
 .scenemap-settings .scenemap-check { flex-direction: row; align-items: center; color: var(--lumiverse-text); }
 .scenemap-settings-preset-row { display: grid; grid-template-columns: minmax(220px, 1fr) repeat(5, auto); gap: 8px; align-items: end; }
 .scenemap-settings-preset-row label { margin: 10px 0 0; min-width: 0; }
-.scenemap-settings-preset-row .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-width: 68px; }
+.scenemap-settings-preset-row .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-width: 56px; padding: 6px 11px !important; min-height: 32px; }
 .scenemap-settings-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
 .scenemap-settings-actions-left, .scenemap-settings-actions-right { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.scenemap-settings-actions .scenemap-pill-action { padding: 6px 11px !important; min-height: 32px; }
 .scenemap-settings input:not([type="checkbox"]), .scenemap-settings select, .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-layout-editor select, .scenemap-name-editor input {
   width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: 6px;
   background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 7px 9px; font: inherit;
