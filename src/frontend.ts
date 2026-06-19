@@ -989,7 +989,7 @@ const styles = `
 .scenemap-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .scenemap-chips b { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 650; }
 .scenemap-character-grid { display: flex; flex-direction: column; gap: 10px; }
-.scenemap-character { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); border-radius: 8px; padding: 10px; }
+.scenemap-character { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: 8px; padding: 10px; }
 .scenemap-character h4 { margin: 0 0 10px; font-size: 13px; }
 .scenemap-settings-heading { margin-bottom: 12px; }
 .scenemap-settings-heading h3 { margin: 0; font-size: 15px; font-weight: 800; }
