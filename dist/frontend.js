@@ -344,7 +344,6 @@ function renderSettings() {
     <section class="scenemap-card scenemap-settings">
       <div class="scenemap-settings-heading">
         <h3>SceneMap</h3>
-        <p>${statusText()}</p>
       </div>
       <label>
         <span>Connection</span>
@@ -368,23 +367,23 @@ function renderSettings() {
           ${Array.from({ length: 20 }, (_, i) => i + 1).map((count) => `<option value="${count}" ${settings.includeLastXMessages === count ? "selected" : ""}>Last ${count}</option>`).join("")}
         </select>
       </label>
-      <label>
-        <span>Global preset</span>
-        <select data-setting="schemaPreset">
-          ${Object.entries(settings.schemaPresets).map(([key, preset]) => `<option value="${escapeAttr(key)}" ${settings.schemaPreset === key ? "selected" : ""}>${escapeHtml(preset.name)}</option>`).join("")}
-        </select>
-      </label>
-      <div class="scenemap-row">
-        <button data-action="create-preset">${layoutIcon("plus")} New preset</button>
-        <button data-action="rename-preset">Rename preset</button>
+      <div class="scenemap-settings-preset-row">
+        <label>
+          <span>Global preset</span>
+          <select data-setting="schemaPreset">
+            ${Object.entries(settings.schemaPresets).map(([key, preset]) => `<option value="${escapeAttr(key)}" ${settings.schemaPreset === key ? "selected" : ""}>${escapeHtml(preset.name)}</option>`).join("")}
+          </select>
+        </label>
+        <button class="scenemap-pill-action" data-action="create-preset">${layoutIcon("plus")} New preset</button>
+        <button class="scenemap-pill-action" data-action="rename-preset">Rename preset</button>
       </div>
-      <div class="scenemap-row">
-        <button data-action="edit-schema">Schema</button>
-        <button data-action="edit-prompt">Prompt</button>
-        <button data-action="edit-layout">Layout</button>
-        <button data-action="reset-defaults">Reset</button>
+      <div class="scenemap-settings-actions">
+        <button class="scenemap-pill-action" data-action="edit-schema">Schema</button>
+        <button class="scenemap-pill-action" data-action="edit-prompt">Prompt</button>
+        <button class="scenemap-pill-action" data-action="edit-layout">Layout</button>
+        <button class="scenemap-pill-action scenemap-danger" data-action="reset-defaults">Reset</button>
+        <button class="scenemap-pill-action scenemap-primary" data-action="save-settings">Save settings</button>
       </div>
-      <button class="scenemap-primary" data-action="save-settings">Save settings</button>
     </section>
   `;
 }
@@ -1108,9 +1107,11 @@ var styles = `
 .scenemap-character h4 { margin: 0 0 10px; font-size: 13px; }
 .scenemap-settings-heading { margin-bottom: 12px; }
 .scenemap-settings-heading h3 { margin: 0; font-size: 15px; font-weight: 800; }
-.scenemap-settings-heading p { margin: 4px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; }
 .scenemap-settings label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
 .scenemap-settings .scenemap-check { flex-direction: row; align-items: center; color: var(--lumiverse-text); }
+.scenemap-settings-preset-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto auto; gap: 8px; align-items: end; }
+.scenemap-settings-preset-row label { margin: 10px 0 0; min-width: 0; }
+.scenemap-settings-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .scenemap-settings input:not([type="checkbox"]), .scenemap-settings select, .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-layout-editor select, .scenemap-name-editor input {
   width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: 6px;
   background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 7px 9px; font: inherit;
@@ -1152,6 +1153,8 @@ var styles = `
 .scenemap-float-button { width: 100%; height: 100%; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
 @media (max-width: 760px) {
   .scenemap-layout-section-header, .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: 1fr; }
+  .scenemap-settings-preset-row { grid-template-columns: 1fr; align-items: stretch; }
+  .scenemap-settings-actions { justify-content: flex-start; }
   .scenemap-layout-actions { justify-content: flex-start; }
   .scenemap-layout-intro { align-items: stretch; flex-direction: column; }
 }
