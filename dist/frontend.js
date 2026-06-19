@@ -328,10 +328,10 @@ function renderDrawer() {
         <button class="scenemap-pill-action scenemap-pill-icon" data-action="refresh" title="Refresh">${refreshSvg()}</button>
       </header>
 
-      <p class="scenemap-status">${statusText()}</p>
+      <p class="scenemap-status ${state.generatingMessageId ? "is-generating" : ""}">${statusMarkup()}</p>
 
       <section class="scenemap-card scenemap-board">
-        ${latest ? renderTracker(latest.displayData ?? latest.data, settings.displayLayout) : `<div class="scenemap-empty">No tracker found for this swipe yet.</div>`}
+        ${latest ? renderTracker(latest.displayData ?? latest.data, settings.displayLayout) : `<div class="scenemap-empty">Generate a SceneMap for this swipe</div>`}
       </section>
     </div>
   `;
@@ -390,14 +390,19 @@ function renderSettings() {
 }
 function statusText() {
   if (!state.chatId)
-    return "Open a chat to start tracking.";
+    return "Open a chat to start tracking";
   if (state.generatingMessageId)
-    return "Generating tracker...";
+    return "Mapping this scene";
   if (!state.latest)
-    return "Ready to generate a tracker.";
+    return "This scene is unmapped";
   if (state.messagesBehind > 0)
-    return `Tracker is ${state.messagesBehind} assistant message${state.messagesBehind === 1 ? "" : "s"} behind.`;
-  return "Tracker is current.";
+    return `SceneMap is ${state.messagesBehind} message${state.messagesBehind === 1 ? "" : "s"} behind`;
+  return "SceneMap is current";
+}
+function statusMarkup() {
+  if (!state.generatingMessageId)
+    return escapeHtml(statusText());
+  return `Mapping this scene<span class="scenemap-loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>`;
 }
 function handleClick(event) {
   const target = event.target;
@@ -1079,6 +1084,10 @@ var styles = `
 .scenemap-header h2 { margin: 0; font-size: 18px; font-weight: 700; }
 .scenemap-header p { margin: 3px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; }
 .scenemap-status { margin: -4px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; text-align: center; }
+.scenemap-status.is-generating { color: var(--lumiverse-success, var(--lumiverse-accent)); animation: scenemap-status-pulse 1.8s ease-in-out infinite; }
+.scenemap-loading-dots span { display: inline-block; animation: scenemap-dot-fade 1.2s ease-in-out infinite; }
+.scenemap-loading-dots span:nth-child(2) { animation-delay: .16s; }
+.scenemap-loading-dots span:nth-child(3) { animation-delay: .32s; }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scenemap-modal-spacer { flex: 1 1 auto; }
 .scenemap-card { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
@@ -1142,6 +1151,15 @@ var styles = `
   .scenemap-layout-section-header, .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: 1fr; }
   .scenemap-layout-actions { justify-content: flex-start; }
   .scenemap-layout-intro { align-items: stretch; flex-direction: column; }
+}
+@keyframes scenemap-status-pulse {
+  0%, 100% { opacity: .72; }
+  50% { opacity: 1; }
+}
+@keyframes scenemap-dot-fade {
+  0%, 20% { opacity: .2; transform: translateY(0); }
+  45% { opacity: 1; transform: translateY(-1px); }
+  80%, 100% { opacity: .2; transform: translateY(0); }
 }
 `;
 export {
