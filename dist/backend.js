@@ -446,10 +446,46 @@ async function getActiveContext(userId) {
   const messages = await spindle.chat.getMessages(chat.id);
   return { chat, messages };
 }
+async function resolveTrackerDisplayData(value, context) {
+  if (typeof value === "string")
+    return resolveDisplayText(value, context);
+  if (Array.isArray(value))
+    return Promise.all(value.map((item) => resolveTrackerDisplayData(item, context)));
+  if (!value || typeof value !== "object")
+    return value;
+  const entries = await Promise.all(Object.entries(value).map(async ([key, child]) => [
+    key,
+    await resolveTrackerDisplayData(child, context)
+  ]));
+  return Object.fromEntries(entries);
+}
+async function resolveDisplayText(text, context) {
+  if (!text.includes("{{"))
+    return text;
+  try {
+    const result = await spindle.macros.resolve(text, {
+      chatId: context.chatId,
+      characterId: context.characterId || undefined,
+      userId: context.userId,
+      commit: false
+    });
+    return result.text;
+  } catch (error) {
+    spindle.log.warn(`SceneMap macro display resolve failed: ${error.message}`);
+    return text;
+  }
+}
 async function buildState(userId) {
   const settings = await loadSettings(userId);
   const { chat, messages } = await getActiveContext(userId);
   const latest = getLatestTrackerEntry(messages);
+  if (latest && chat) {
+    latest.displayData = await resolveTrackerDisplayData(latest.data, {
+      chatId: chat.id,
+      characterId: chat.character_id,
+      userId
+    });
+  }
   return {
     settings,
     chatId: chat?.id ?? null,
@@ -463,7 +499,7 @@ async function buildState(userId) {
 async function pushState(userId) {
   const state = await buildState(userId);
   spindle.sendToFrontend({ type: "state", state }, userId);
-  spindle.updateMacroValue("scenemap", trackerToText(state.latest?.data ?? null));
+  spindle.updateMacroValue("scenemap", trackerToText(state.latest?.displayData ?? state.latest?.data ?? null));
 }
 async function refreshMacroValue() {
   spindle.updateMacroValue("scenemap", "");

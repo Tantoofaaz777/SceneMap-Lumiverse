@@ -42,6 +42,7 @@ export interface SceneMapSettings {
 export interface TrackerEntry {
   messageId: string;
   data: unknown;
+  displayData?: unknown;
 }
 
 export interface SceneMapState {

@@ -169,7 +169,7 @@ function renderDrawer() {
       </section>
 
       <section class="scenemap-card scenemap-board">
-        ${latest ? renderTracker(latest.data, settings.displayLayout) : `<div class="scenemap-empty">No tracker found for this chat yet.</div>`}
+        ${latest ? renderTracker(latest.displayData ?? latest.data, settings.displayLayout) : `<div class="scenemap-empty">No tracker found for this chat yet.</div>`}
       </section>
     </div>
   `;

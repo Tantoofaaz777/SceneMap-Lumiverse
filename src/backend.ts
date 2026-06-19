@@ -22,6 +22,11 @@ type ChatMessage = {
   metadata?: Record<string, unknown>;
 };
 
+type ActiveChat = {
+  id: string;
+  character_id?: string | null;
+};
+
 type ConnectionSummary = {
   id: string;
   name: string;
@@ -131,16 +136,53 @@ async function listConnections(userId?: string): Promise<ConnectionSummary[]> {
 }
 
 async function getActiveContext(userId: string) {
-  const chat = await spindle.chats.getActive(userId);
+  const chat = await spindle.chats.getActive(userId) as ActiveChat | null;
   if (!chat) return { chat: null, messages: [] as ChatMessage[] };
   const messages = (await spindle.chat.getMessages(chat.id)) as ChatMessage[];
   return { chat, messages };
+}
+
+async function resolveTrackerDisplayData(value: unknown, context: { chatId: string; characterId?: string | null; userId: string }): Promise<unknown> {
+  if (typeof value === "string") return resolveDisplayText(value, context);
+  if (Array.isArray(value)) return Promise.all(value.map((item) => resolveTrackerDisplayData(item, context)));
+  if (!value || typeof value !== "object") return value;
+
+  const entries = await Promise.all(
+    Object.entries(value as Record<string, unknown>).map(async ([key, child]) => [
+      key,
+      await resolveTrackerDisplayData(child, context),
+    ] as const),
+  );
+  return Object.fromEntries(entries);
+}
+
+async function resolveDisplayText(text: string, context: { chatId: string; characterId?: string | null; userId: string }): Promise<string> {
+  if (!text.includes("{{")) return text;
+  try {
+    const result = await spindle.macros.resolve(text, {
+      chatId: context.chatId,
+      characterId: context.characterId || undefined,
+      userId: context.userId,
+      commit: false,
+    });
+    return result.text;
+  } catch (error) {
+    spindle.log.warn(`SceneMap macro display resolve failed: ${(error as Error).message}`);
+    return text;
+  }
 }
 
 async function buildState(userId: string): Promise<SceneMapState> {
   const settings = await loadSettings(userId);
   const { chat, messages } = await getActiveContext(userId);
   const latest = getLatestTrackerEntry(messages);
+  if (latest && chat) {
+    latest.displayData = await resolveTrackerDisplayData(latest.data, {
+      chatId: chat.id,
+      characterId: chat.character_id,
+      userId,
+    });
+  }
   return {
     settings,
     chatId: chat?.id ?? null,
@@ -155,7 +197,7 @@ async function buildState(userId: string): Promise<SceneMapState> {
 async function pushState(userId: string) {
   const state = await buildState(userId);
   spindle.sendToFrontend({ type: "state", state }, userId);
-  spindle.updateMacroValue("scenemap", trackerToText(state.latest?.data ?? null));
+  spindle.updateMacroValue("scenemap", trackerToText(state.latest?.displayData ?? state.latest?.data ?? null));
 }
 
 async function refreshMacroValue() {
