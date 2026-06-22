@@ -206,6 +206,7 @@ var rootRef = null;
 var settingsRootRef = null;
 var toolbarRootRef = null;
 var tabHandle = null;
+var isRefreshingState = false;
 var iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
 function setup(ctx) {
   ctxRef = ctx;
@@ -227,18 +228,9 @@ function setup(ctx) {
   toolbarRootRef = ctx.ui.mount("chat_toolbar");
   toolbarRootRef.classList.add("scenemap-chat-toolbar-root");
   render();
-  const action = ctx.ui.registerInputBarAction({
-    id: "generate-latest",
-    label: "Generate SceneMap",
-    subtitle: "Track latest assistant message",
-    iconSvg
-  });
-  const offAction = action.onClick(() => {
-    send({ type: "generate_tracker", messageId: state.activeMessageId });
-    tab.activate();
-  });
   const offBackend = ctx.onBackendMessage((payload) => {
     if (payload?.type === "state") {
+      isRefreshingState = false;
       state = payload.state;
       render();
       return;
@@ -278,10 +270,8 @@ function setup(ctx) {
     settingsRootRef?.removeEventListener("input", handleInput);
     toolbarRootRef?.removeEventListener("click", handleClick);
     offBackend();
-    offAction();
     for (const off of offEvents)
       off();
-    action.destroy();
     tab.destroy();
     removeStyle();
     ctx.dom.cleanup();
@@ -295,7 +285,11 @@ function setup(ctx) {
 function send(payload) {
   ctxRef?.sendToBackend(payload);
 }
-function requestState() {
+function requestState(showRefresh = false) {
+  if (showRefresh) {
+    isRefreshingState = true;
+    renderDrawer();
+  }
   send({ type: "get_state" });
 }
 function render() {
@@ -335,7 +329,7 @@ function renderDrawer() {
         </button>
         <button class="scenemap-pill-action" data-action="edit" ${latest ? "" : "disabled"}>Edit</button>
         <button class="scenemap-pill-action scenemap-danger" data-action="delete" ${latest ? "" : "disabled"}>Delete</button>
-        <button class="scenemap-pill-action scenemap-pill-icon" data-action="refresh" title="Refresh">${refreshSvg()}</button>
+        <button class="scenemap-pill-action scenemap-pill-icon ${isRefreshingState ? "is-refreshing" : ""}" data-action="refresh" title="Refresh">${refreshSvg()}</button>
       </header>
 
       <p class="scenemap-status ${state.generatingMessageId ? "is-generating" : ""}">${statusMarkup()}</p>
@@ -429,7 +423,7 @@ function handleClick(event) {
     return;
   const action = button.dataset.action;
   if (action === "refresh")
-    requestState();
+    requestState(true);
   if (action === "generate")
     send({ type: "generate_tracker", messageId: state.activeMessageId });
   if (action === "edit" && state.latest)
@@ -1321,6 +1315,7 @@ var styles = `
 .scenemap-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
 .scenemap-pill-action { border-radius: 999px !important; padding: 7px 13px !important; min-height: 34px; }
 .scenemap-pill-icon { width: 34px; min-width: 34px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; }
+.scenemap-pill-icon.is-refreshing svg { animation: scenemap-spin .9s linear infinite; }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: 8px; padding: 10px; font-size: 12px; }
 @media (max-width: 760px) {
   .scenemap-layout-section-header { grid-template-columns: 1fr; align-items: stretch; }
