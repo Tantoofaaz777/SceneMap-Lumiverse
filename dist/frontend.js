@@ -1247,6 +1247,7 @@ var styles = `
 .scenemap-chat-toolbar-btn:hover:not(:disabled) { color: var(--lumiverse-text, rgba(230, 230, 240, .92)); background: var(--lumiverse-fill, rgba(255, 255, 255, .06)); }
 .scenemap-chat-toolbar-btn.is-attention { color: var(--lumiverse-primary, var(--lumiverse-accent)); background: color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 10%, transparent); }
 .scenemap-chat-toolbar-btn.is-generating { color: var(--lumiverse-success, var(--lumiverse-accent)); animation: scenemap-status-pulse 1.8s ease-in-out infinite; }
+.scenemap-chat-toolbar-btn.is-generating svg { animation: scenemap-spin .9s linear infinite; }
 .scenemap-chat-toolbar-btn:disabled { opacity: .45; cursor: default; }
 .scenemap-chat-toolbar-btn svg { width: 14px; height: 14px; }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -1344,6 +1345,9 @@ var styles = `
   0%, 20% { opacity: .2; transform: translateY(0); }
   45% { opacity: 1; transform: translateY(-1px); }
   80%, 100% { opacity: .2; transform: translateY(0); }
+}
+@keyframes scenemap-spin {
+  to { transform: rotate(360deg); }
 }
 `;
 export {

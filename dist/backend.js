@@ -717,6 +717,7 @@ async function generateTracker(messageId, userId) {
   activeGenerations.set(target.id, controller);
   if (userId)
     await pushState(userId);
+  spindle.toast.info("Mapping this scene...", { title: "SceneMap", userId });
   try {
     const result = await spindle.generate.quiet({
       messages: promptMessages,
