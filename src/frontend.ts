@@ -28,6 +28,7 @@ let state: SceneMapState = {
 let ctxRef: SpindleFrontendContext | null = null;
 let rootRef: HTMLElement | null = null;
 let settingsRootRef: HTMLElement | null = null;
+let toolbarRootRef: HTMLElement | null = null;
 let tabHandle: ReturnType<SpindleFrontendContext["ui"]["registerDrawerTab"]> | null = null;
 
 const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
@@ -49,6 +50,8 @@ export function setup(ctx: SpindleFrontendContext) {
   rootRef.classList.add("scenemap-lv");
   settingsRootRef = ctx.ui.mount("settings_extensions");
   settingsRootRef.classList.add("scenemap-settings-root");
+  toolbarRootRef = ctx.ui.mount("chat_toolbar");
+  toolbarRootRef.classList.add("scenemap-chat-toolbar-root");
   render();
 
   const action = ctx.ui.registerInputBarAction({
@@ -93,6 +96,7 @@ export function setup(ctx: SpindleFrontendContext) {
   settingsRootRef.addEventListener("click", handleClick);
   settingsRootRef.addEventListener("change", handleChange);
   settingsRootRef.addEventListener("input", handleInput);
+  toolbarRootRef.addEventListener("click", handleClick);
   requestState();
 
   return () => {
@@ -102,6 +106,7 @@ export function setup(ctx: SpindleFrontendContext) {
     settingsRootRef?.removeEventListener("click", handleClick);
     settingsRootRef?.removeEventListener("change", handleChange);
     settingsRootRef?.removeEventListener("input", handleInput);
+    toolbarRootRef?.removeEventListener("click", handleClick);
     offBackend();
     offAction();
     for (const off of offEvents) off();
@@ -112,6 +117,7 @@ export function setup(ctx: SpindleFrontendContext) {
     ctxRef = null;
     rootRef = null;
     settingsRootRef = null;
+    toolbarRootRef = null;
     tabHandle = null;
   };
 }
@@ -127,7 +133,26 @@ function requestState() {
 function render() {
   renderDrawer();
   renderSettings();
+  renderChatToolbar();
   tabHandle?.setBadge(state.messagesBehind > 0 ? String(state.messagesBehind) : null);
+}
+
+function renderChatToolbar() {
+  if (!toolbarRootRef) return;
+  const label = state.generatingMessageId ? "Cancel SceneMap generation" : state.latest ? "Regenerate SceneMap" : "Generate SceneMap";
+  const isBehind = !state.latest || state.messagesBehind > 0;
+  toolbarRootRef.innerHTML = `
+    <button
+      type="button"
+      class="scenemap-chat-toolbar-btn ${isBehind ? "is-attention" : ""} ${state.generatingMessageId ? "is-generating" : ""}"
+      data-action="generate"
+      title="${escapeAttr(label)}"
+      aria-label="${escapeAttr(label)}"
+      ${state.activeMessageId ? "" : "disabled"}
+    >
+      ${state.generatingMessageId ? refreshSvg() : iconSvg}
+    </button>
+  `;
 }
 
 function renderDrawer() {
@@ -1081,6 +1106,14 @@ const styles = `
 .scenemap-loading-dots span { display: inline-block; animation: scenemap-dot-fade 1.2s ease-in-out infinite; }
 .scenemap-loading-dots span:nth-child(2) { animation-delay: .16s; }
 .scenemap-loading-dots span:nth-child(3) { animation-delay: .32s; }
+[data-spindle-mount="chat_toolbar"]:has(.scenemap-chat-toolbar-root) { display: flex; align-items: center; gap: 2px; }
+.scenemap-chat-toolbar-root { display: inline-flex; align-items: center; }
+.scenemap-chat-toolbar-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 26px; padding: 0; border: 0; border-radius: var(--lcs-radius-xs, 6px); background: transparent; color: var(--lumiverse-text-dim, rgba(230, 230, 240, .4)); cursor: pointer; transition: color .12s ease, background .12s ease; }
+.scenemap-chat-toolbar-btn:hover:not(:disabled) { color: var(--lumiverse-text, rgba(230, 230, 240, .92)); background: var(--lumiverse-fill, rgba(255, 255, 255, .06)); }
+.scenemap-chat-toolbar-btn.is-attention { color: var(--lumiverse-primary, var(--lumiverse-accent)); background: color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 10%, transparent); }
+.scenemap-chat-toolbar-btn.is-generating { color: var(--lumiverse-success, var(--lumiverse-accent)); animation: scenemap-status-pulse 1.8s ease-in-out infinite; }
+.scenemap-chat-toolbar-btn:disabled { opacity: .45; cursor: default; }
+.scenemap-chat-toolbar-btn svg { width: 14px; height: 14px; }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scenemap-modal-spacer { flex: 1 1 auto; }
 .scenemap-card { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
