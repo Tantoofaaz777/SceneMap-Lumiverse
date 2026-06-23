@@ -550,11 +550,12 @@ async function buildCharacterReference(chat, userId) {
       return null;
     const lines = [
       `${getEffectiveCharacterName(character)}:`,
-      labeledText("Description", character.description),
-      labeledText("Personality", character.personality),
-      labeledText("Scenario", character.scenario)
+      compactText(character.description),
+      compactText(character.personality),
+      compactText(character.scenario)
     ].filter(Boolean);
     return lines.length > 1 ? lines.join(`
+
 `) : null;
   } catch (error) {
     spindle.log.warn(`SceneMap could not read character card context: ${error.message}`);
@@ -569,9 +570,10 @@ async function buildPersonaReference(chat, userId) {
     const resolvedPersona = await resolvePersonaMacro(chat, userId, persona.description);
     const lines = [
       `${compactText(persona.name) || "Persona"}:`,
-      labeledText("Description", resolvedPersona)
+      compactText(resolvedPersona)
     ].filter(Boolean);
     return lines.length > 1 ? lines.join(`
+
 `) : null;
   } catch (error) {
     spindle.log.warn(`SceneMap could not read persona context: ${error.message}`);
@@ -602,10 +604,6 @@ async function buildActiveWorldInfoReference(chatId, userId) {
     spindle.log.warn(`SceneMap could not read active world info context: ${error.message}`);
     return null;
   }
-}
-function labeledText(label, value) {
-  const text = compactText(value);
-  return text ? `${label}: ${text}` : "";
 }
 function getEffectiveCharacterName(character) {
   return compactText(character.extensions?.alternate_character_name) || compactText(character.name) || "Character";

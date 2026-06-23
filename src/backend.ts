@@ -260,11 +260,11 @@ async function buildCharacterReference(chat: ActiveChat, userId: string): Promis
     if (!character) return null;
     const lines = [
       `${getEffectiveCharacterName(character)}:`,
-      labeledText("Description", character.description),
-      labeledText("Personality", character.personality),
-      labeledText("Scenario", character.scenario),
+      compactText(character.description),
+      compactText(character.personality),
+      compactText(character.scenario),
     ].filter(Boolean);
-    return lines.length > 1 ? lines.join("\n") : null;
+    return lines.length > 1 ? lines.join("\n\n") : null;
   } catch (error) {
     spindle.log.warn(`SceneMap could not read character card context: ${(error as Error).message}`);
     return null;
@@ -278,9 +278,9 @@ async function buildPersonaReference(chat: ActiveChat, userId: string): Promise<
     const resolvedPersona = await resolvePersonaMacro(chat, userId, persona.description);
     const lines = [
       `${compactText(persona.name) || "Persona"}:`,
-      labeledText("Description", resolvedPersona),
+      compactText(resolvedPersona),
     ].filter(Boolean);
-    return lines.length > 1 ? lines.join("\n") : null;
+    return lines.length > 1 ? lines.join("\n\n") : null;
   } catch (error) {
     spindle.log.warn(`SceneMap could not read persona context: ${(error as Error).message}`);
     return null;
