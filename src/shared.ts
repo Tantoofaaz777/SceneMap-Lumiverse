@@ -181,12 +181,14 @@ export const DEFAULT_DISPLAY_LAYOUT: TrackerBoardDisplayLayout = {
   ],
 };
 
-export const DEFAULT_PROMPT_JSON = `You are a highly specialized AI assistant. Your SOLE purpose is to generate a single, valid JSON object that strictly adheres to the provided JSON schema.
+export const DEFAULT_PROMPT_JSON = `<Instructions>
+You are a highly specialized AI assistant. Your SOLE purpose is to generate a single, valid JSON object that strictly adheres to the provided JSON schema.
 
 CRITICAL INSTRUCTIONS:
 1. You MUST wrap the entire JSON object in a markdown code block (\`\`\`json\\n...\\n\`\`\`).
 2. Your response MUST NOT contain explanatory text, comments, or any content outside this single code block.
 3. The JSON object inside the code block MUST be valid and conform to the schema.
+</Instructions>
 
 JSON SCHEMA TO FOLLOW:
 \`\`\`json
