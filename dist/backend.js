@@ -548,15 +548,11 @@ async function buildCharacterReference(chat, userId) {
     const character = await spindle.characters.get(chat.character_id, userId);
     if (!character)
       return null;
-    const lines = [
-      `${getEffectiveCharacterName(character)}:`,
+    return taggedReferenceBlock(getEffectiveCharacterName(character), [
       compactText(character.description),
       compactText(character.personality),
       compactText(character.scenario)
-    ].filter(Boolean);
-    return lines.length > 1 ? lines.join(`
-
-`) : null;
+    ]);
   } catch (error) {
     spindle.log.warn(`SceneMap could not read character card context: ${error.message}`);
     return null;
@@ -568,13 +564,9 @@ async function buildPersonaReference(chat, userId) {
     if (!persona)
       return null;
     const resolvedPersona = await resolvePersonaMacro(chat, userId, persona.description);
-    const lines = [
-      `${compactText(persona.name) || "Persona"}:`,
+    return taggedReferenceBlock(compactText(persona.name) || "Persona", [
       compactText(resolvedPersona)
-    ].filter(Boolean);
-    return lines.length > 1 ? lines.join(`
-
-`) : null;
+    ]);
   } catch (error) {
     spindle.log.warn(`SceneMap could not read persona context: ${error.message}`);
     return null;
@@ -607,6 +599,17 @@ async function buildActiveWorldInfoReference(chatId, userId) {
 }
 function getEffectiveCharacterName(character) {
   return compactText(character.extensions?.alternate_character_name) || compactText(character.name) || "Character";
+}
+function taggedReferenceBlock(name, parts) {
+  const tag = compactTagName(name) || "Reference";
+  const body = parts.map(compactText).filter(Boolean).join(`
+
+`);
+  return body ? [`<${tag}>`, body, `</${tag}>`].join(`
+`) : null;
+}
+function compactTagName(name) {
+  return compactText(name).replace(/[<>]/g, "").trim();
 }
 async function resolvePersonaMacro(chat, userId, fallback) {
   try {

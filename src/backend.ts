@@ -258,13 +258,11 @@ async function buildCharacterReference(chat: ActiveChat, userId: string): Promis
   try {
     const character = await spindle.characters.get(chat.character_id, userId);
     if (!character) return null;
-    const lines = [
-      `${getEffectiveCharacterName(character)}:`,
+    return taggedReferenceBlock(getEffectiveCharacterName(character), [
       compactText(character.description),
       compactText(character.personality),
       compactText(character.scenario),
-    ].filter(Boolean);
-    return lines.length > 1 ? lines.join("\n\n") : null;
+    ]);
   } catch (error) {
     spindle.log.warn(`SceneMap could not read character card context: ${(error as Error).message}`);
     return null;
@@ -276,11 +274,9 @@ async function buildPersonaReference(chat: ActiveChat, userId: string): Promise<
     const persona = await spindle.personas.getActive(userId) ?? await spindle.personas.getDefault(userId);
     if (!persona) return null;
     const resolvedPersona = await resolvePersonaMacro(chat, userId, persona.description);
-    const lines = [
-      `${compactText(persona.name) || "Persona"}:`,
+    return taggedReferenceBlock(compactText(persona.name) || "Persona", [
       compactText(resolvedPersona),
-    ].filter(Boolean);
-    return lines.length > 1 ? lines.join("\n\n") : null;
+    ]);
   } catch (error) {
     spindle.log.warn(`SceneMap could not read persona context: ${(error as Error).message}`);
     return null;
@@ -315,6 +311,16 @@ function labeledText(label: string, value: unknown): string {
 
 function getEffectiveCharacterName(character: { name?: unknown; extensions?: Record<string, unknown> }): string {
   return compactText(character.extensions?.alternate_character_name) || compactText(character.name) || "Character";
+}
+
+function taggedReferenceBlock(name: string, parts: string[]): string | null {
+  const tag = compactTagName(name) || "Reference";
+  const body = parts.map(compactText).filter(Boolean).join("\n\n");
+  return body ? [`<${tag}>`, body, `</${tag}>`].join("\n") : null;
+}
+
+function compactTagName(name: unknown): string {
+  return compactText(name).replace(/[<>]/g, "").trim();
 }
 
 async function resolvePersonaMacro(chat: ActiveChat, userId: string, fallback: unknown): Promise<string> {
