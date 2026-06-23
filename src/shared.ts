@@ -52,6 +52,7 @@ export interface SceneMapState {
   chatId: string | null;
   latest: TrackerEntry | null;
   messagesBehind: number;
+  autoGenerateMessagesRemaining: number | null;
   activeMessageId: string | null;
   activeSwipeId: number | null;
   generatingMessageId: string | null;

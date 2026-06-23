@@ -204,6 +204,15 @@ function findTargetMessage(messages: ChatMessage[], messageId?: string | null): 
   return null;
 }
 
+function getAutoGenerateMessagesRemaining(settings: SceneMapSettings, messages: ChatMessage[], latest: TrackerEntry | null, activeMessage: ChatMessage | null): number | null {
+  if (!settings.autoGenerateAiTrackers || !activeMessage || activeMessage.role !== "assistant") return null;
+  const interval = Math.max(1, Math.floor(settings.autoGenerateInterval || 1));
+  const messagesDue = latest
+    ? countAssistantMessagesAfter(messages, latest.messageId)
+    : countAssistantMessagesBetween(messages, null, activeMessage.id);
+  return Math.max(0, interval - messagesDue);
+}
+
 function getPreviousTrackerJson(messages: ChatMessage[], currentMessageId: string, skipCurrent: boolean): string {
   let skippedCurrent = !skipCurrent;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -455,6 +464,7 @@ async function buildState(userId: string): Promise<SceneMapState> {
     chatId: chat?.id ?? null,
     latest,
     messagesBehind: latest ? countAssistantMessagesAfter(messages, latest.messageId) : 0,
+    autoGenerateMessagesRemaining: getAutoGenerateMessagesRemaining(settings, messages, latest, activeMessage),
     activeMessageId: activeMessage?.id ?? null,
     activeSwipeId: activeMessage ? getActiveSwipeId(activeMessage) : null,
     generatingMessageId: getActiveGenerationMessageId(userId),

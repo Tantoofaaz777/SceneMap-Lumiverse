@@ -475,6 +475,13 @@ function findTargetMessage(messages, messageId) {
   }
   return null;
 }
+function getAutoGenerateMessagesRemaining(settings, messages, latest, activeMessage) {
+  if (!settings.autoGenerateAiTrackers || !activeMessage || activeMessage.role !== "assistant")
+    return null;
+  const interval = Math.max(1, Math.floor(settings.autoGenerateInterval || 1));
+  const messagesDue = latest ? countAssistantMessagesAfter(messages, latest.messageId) : countAssistantMessagesBetween(messages, null, activeMessage.id);
+  return Math.max(0, interval - messagesDue);
+}
 function getPreviousTrackerJson(messages, currentMessageId, skipCurrent) {
   let skippedCurrent = !skipCurrent;
   for (let i = messages.length - 1;i >= 0; i -= 1) {
@@ -725,6 +732,7 @@ async function buildState(userId) {
     chatId: chat?.id ?? null,
     latest,
     messagesBehind: latest ? countAssistantMessagesAfter(messages, latest.messageId) : 0,
+    autoGenerateMessagesRemaining: getAutoGenerateMessagesRemaining(settings, messages, latest, activeMessage),
     activeMessageId: activeMessage?.id ?? null,
     activeSwipeId: activeMessage ? getActiveSwipeId(activeMessage) : null,
     generatingMessageId: getActiveGenerationMessageId(userId),

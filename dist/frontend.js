@@ -197,6 +197,7 @@ var state = {
   chatId: null,
   latest: null,
   messagesBehind: 0,
+  autoGenerateMessagesRemaining: null,
   activeMessageId: null,
   activeSwipeId: null,
   generatingMessageId: null,
@@ -412,11 +413,22 @@ function statusText() {
     return "Open a chat to start tracking";
   if (state.generatingMessageId)
     return "Mapping this scene";
+  const autoText = autoGenerateStatusText();
+  const suffix = autoText ? ` · ${autoText}` : "";
   if (!state.latest)
-    return "This scene is unmapped";
+    return `This scene is unmapped${suffix}`;
   if (state.messagesBehind > 0)
-    return `SceneMap is ${state.messagesBehind} message${state.messagesBehind === 1 ? "" : "s"} behind`;
-  return "SceneMap is updated";
+    return `SceneMap is ${state.messagesBehind} message${state.messagesBehind === 1 ? "" : "s"} behind${suffix}`;
+  return `SceneMap is updated${suffix}`;
+}
+function autoGenerateStatusText() {
+  if (!state.settings.autoGenerateAiTrackers || state.autoGenerateMessagesRemaining == null)
+    return null;
+  if (state.autoGenerateMessagesRemaining <= 0)
+    return "auto-generation is due";
+  if (state.autoGenerateMessagesRemaining === 1)
+    return "auto-generates on next assistant message";
+  return `auto-generates in ${state.autoGenerateMessagesRemaining} assistant messages`;
 }
 function statusMarkup() {
   if (!state.generatingMessageId)
