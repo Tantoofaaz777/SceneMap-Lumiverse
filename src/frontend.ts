@@ -191,15 +191,17 @@ function renderSettings() {
             .join("")}
         </select>
       </label>
-      <label class="scenemap-switch-row">
-        <span>Auto-generate after assistant replies</span>
-        <input type="checkbox" data-setting="autoGenerateAiTrackers" ${settings.autoGenerateAiTrackers ? "checked" : ""}>
-        <span class="scenemap-switch" aria-hidden="true"></span>
-      </label>
-      <label>
-        <span>Interval</span>
-        <input type="number" min="1" step="1" data-setting="autoGenerateInterval" value="${settings.autoGenerateInterval > 1 ? settings.autoGenerateInterval : ""}" placeholder="1 = every message">
-      </label>
+      <div class="scenemap-auto-row">
+        <label class="scenemap-switch-row">
+          <span>Auto-generate after assistant replies</span>
+          <input type="checkbox" data-setting="autoGenerateAiTrackers" ${settings.autoGenerateAiTrackers ? "checked" : ""}>
+          <span class="scenemap-switch" aria-hidden="true"></span>
+        </label>
+        <label class="scenemap-interval-field">
+          <span>Interval</span>
+          <input type="number" min="1" step="1" data-setting="autoGenerateInterval" value="${settings.autoGenerateInterval > 1 ? settings.autoGenerateInterval : ""}" placeholder="Empty = 1 = every assistant message">
+        </label>
+      </div>
       <label>
         <span>Max response tokens</span>
         <input type="number" min="1" step="1" data-setting="maxResponseTokens" value="${settings.maxResponseTokens}">
@@ -1137,7 +1139,9 @@ const styles = `
 .scenemap-settings-heading h3 { margin: 0; font-size: 15px; font-weight: 800; }
 .scenemap-settings { background: transparent; border-color: transparent; padding: 0; }
 .scenemap-settings label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
-.scenemap-settings .scenemap-switch-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; color: var(--lumiverse-text); border-top: 1px solid var(--lumiverse-border); border-bottom: 1px solid var(--lumiverse-border); padding: 9px 0; }
+.scenemap-auto-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, .55fr); gap: 12px; align-items: center; border-top: 1px solid var(--lumiverse-border); border-bottom: 1px solid var(--lumiverse-border); padding: 9px 0; margin: 10px 0; }
+.scenemap-settings .scenemap-switch-row { flex-direction: row; align-items: center; justify-content: flex-start; gap: 12px; color: var(--lumiverse-text); margin: 0; min-width: 0; }
+.scenemap-interval-field { margin: 0 !important; min-width: 0; }
 .scenemap-switch-row input { position: absolute; opacity: 0; pointer-events: none; }
 .scenemap-switch { position: relative; width: 32px; height: 18px; flex: 0 0 auto; border-radius: 999px; background: var(--lumiverse-fill); border: 1px solid var(--lumiverse-border-hover); transition: background .16s ease, border-color .16s ease; }
 .scenemap-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--lumiverse-text-muted); transition: transform .16s ease, background .16s ease; }
@@ -1196,6 +1200,8 @@ const styles = `
   .scenemap-layout-child-row > select:nth-child(1),
   .scenemap-layout-child-row > input:nth-child(2),
   .scenemap-layout-child-row > select:nth-child(3) { grid-column: 1 / -1; }
+  .scenemap-auto-row { grid-template-columns: 1fr; align-items: stretch; }
+  .scenemap-settings .scenemap-switch-row { justify-content: space-between; }
   .scenemap-settings-preset-row { grid-template-columns: 1fr; align-items: stretch; }
   .scenemap-settings-actions { align-items: stretch; flex-direction: column; }
   .scenemap-settings-actions-left, .scenemap-settings-actions-right { justify-content: flex-start; }
