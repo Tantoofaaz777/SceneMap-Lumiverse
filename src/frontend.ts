@@ -256,9 +256,9 @@ function statusText(): string {
 }
 function autoGenerateStatusText(): string | null {
   if (!state.settings.autoGenerateAiTrackers || state.autoGenerateMessagesRemaining == null) return null;
-  if (state.autoGenerateMessagesRemaining <= 0) return "auto-generation is due";
-  if (state.autoGenerateMessagesRemaining === 1) return "auto-generates on next assistant message";
-  return `auto-generates in ${state.autoGenerateMessagesRemaining} assistant messages`;
+  if (state.autoGenerateMessagesRemaining <= 0) return "Auto-generation is due";
+  if (state.autoGenerateMessagesRemaining === 1) return "Auto-generates on next assistant message";
+  return `Auto-generates in ${state.autoGenerateMessagesRemaining} assistant messages`;
 }
 
 function statusMarkup(): string {

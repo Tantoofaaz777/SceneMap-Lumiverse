@@ -426,10 +426,10 @@ function autoGenerateStatusText() {
   if (!state.settings.autoGenerateAiTrackers || state.autoGenerateMessagesRemaining == null)
     return null;
   if (state.autoGenerateMessagesRemaining <= 0)
-    return "auto-generation is due";
+    return "Auto-generation is due";
   if (state.autoGenerateMessagesRemaining === 1)
-    return "auto-generates on next assistant message";
-  return `auto-generates in ${state.autoGenerateMessagesRemaining} assistant messages`;
+    return "Auto-generates on next assistant message";
+  return `Auto-generates in ${state.autoGenerateMessagesRemaining} assistant messages`;
 }
 function statusMarkup() {
   if (!state.generatingMessageId)
