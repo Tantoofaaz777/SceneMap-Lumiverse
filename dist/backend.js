@@ -125,14 +125,12 @@ var DEFAULT_DISPLAY_LAYOUT = {
     }
   ]
 };
-var DEFAULT_PROMPT_JSON = `<Instructions>
-You are a highly specialized AI assistant. Your SOLE purpose is to generate a single, valid JSON object that strictly adheres to the provided JSON schema.
+var DEFAULT_PROMPT_JSON = `You are a highly specialized AI assistant. Your SOLE purpose is to generate a single, valid JSON object that strictly adheres to the provided JSON schema.
 
 CRITICAL INSTRUCTIONS:
 1. You MUST wrap the entire JSON object in a markdown code block (\`\`\`json\\n...\\n\`\`\`).
 2. Your response MUST NOT contain explanatory text, comments, or any content outside this single code block.
 3. The JSON object inside the code block MUST be valid and conform to the schema.
-</Instructions>
 
 JSON SCHEMA TO FOLLOW:
 \`\`\`json
@@ -648,6 +646,12 @@ function taggedReferenceBlock(name, parts) {
 function compactTagName(name) {
   return compactText(name).replace(/[<>]/g, "").trim();
 }
+function wrapInstructions(text) {
+  const body = compactText(text);
+  return body ? `<Instructions>
+${body}
+</Instructions>` : "";
+}
 function getRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
@@ -769,7 +773,7 @@ async function generateTracker(messageId, userId) {
   const referenceMessage = await buildReferencePromptMessage(chat, userId);
   if (referenceMessage)
     promptMessages.unshift(referenceMessage);
-  promptMessages.push({ role: "user", content: finalPrompt });
+  promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
   const controller = new AbortController;
   activeGenerations.set(target.id, controller);
   if (userId)

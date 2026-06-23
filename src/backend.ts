@@ -369,6 +369,11 @@ function compactTagName(name: unknown): string {
   return compactText(name).replace(/[<>]/g, "").trim();
 }
 
+function wrapInstructions(text: string): string {
+  const body = compactText(text);
+  return body ? `<Instructions>\n${body}\n</Instructions>` : "";
+}
+
 function getRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -494,7 +499,7 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
   const promptMessages = await resolvePromptMessages(trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages), context);
   const referenceMessage = await buildReferencePromptMessage(chat, userId);
   if (referenceMessage) promptMessages.unshift(referenceMessage);
-  promptMessages.push({ role: "user", content: finalPrompt });
+  promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
 
   const controller = new AbortController();
   activeGenerations.set(target.id, controller);
