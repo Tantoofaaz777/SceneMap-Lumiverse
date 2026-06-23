@@ -581,18 +581,13 @@ async function buildActiveWorldInfoReference(chatId, userId) {
       return null;
     const entries = await Promise.all(activated.map(async (entry) => {
       const fullEntry = await spindle.world_books.entries.get(entry.id, userId);
-      const content = compactText(fullEntry?.content);
-      if (!content)
-        return "";
-      const label = compactText(entry.comment || fullEntry?.comment || entry.id);
-      const source = [entry.bookSource, entry.source].filter(Boolean).join(", ");
-      return [`- ${label}${source ? ` (${source})` : ""}:`, content].join(`
-`);
+      return compactText(fullEntry?.content);
     }));
     const activeEntries = entries.filter(Boolean);
     if (activeEntries.length === 0)
       return null;
-    return ["Active world info:", ...activeEntries].join(`
+    return activeEntries.join(`
+
 `);
   } catch (error) {
     spindle.log.warn(`SceneMap could not read active world info context: ${error.message}`);
