@@ -242,7 +242,7 @@ async function buildReferencePromptMessage(chat: ActiveChat, userId: string): Pr
   };
   const sections = [
     await buildCharacterReference(chat, userId),
-    await buildPersonaReference(userId),
+    await buildPersonaReference(chat, userId),
     await buildActiveWorldInfoReference(chat.id, userId),
   ].filter(Boolean) as string[];
   if (sections.length === 0) return null;
@@ -271,13 +271,14 @@ async function buildCharacterReference(chat: ActiveChat, userId: string): Promis
   }
 }
 
-async function buildPersonaReference(userId: string): Promise<string | null> {
+async function buildPersonaReference(chat: ActiveChat, userId: string): Promise<string | null> {
   try {
     const persona = await spindle.personas.getActive(userId) ?? await spindle.personas.getDefault(userId);
     if (!persona) return null;
+    const resolvedPersona = await resolvePersonaMacro(chat, userId, persona.description);
     const lines = [
       `${compactText(persona.name) || "Persona"}:`,
-      labeledText("Description", persona.description),
+      labeledText("Description", resolvedPersona),
     ].filter(Boolean);
     return lines.length > 1 ? lines.join("\n") : null;
   } catch (error) {
@@ -314,6 +315,22 @@ function labeledText(label: string, value: unknown): string {
 
 function getEffectiveCharacterName(character: { name?: unknown; extensions?: Record<string, unknown> }): string {
   return compactText(character.extensions?.alternate_character_name) || compactText(character.name) || "Character";
+}
+
+async function resolvePersonaMacro(chat: ActiveChat, userId: string, fallback: unknown): Promise<string> {
+  try {
+    const result = await spindle.macros.resolve("{{persona}}", {
+      chatId: chat.id,
+      characterId: chat.character_id || undefined,
+      userId,
+      commit: false,
+    });
+    const text = compactText(result.text);
+    return text && text !== "{{persona}}" ? text : compactText(fallback);
+  } catch (error) {
+    spindle.log.warn(`SceneMap could not resolve persona add-ons: ${(error as Error).message}`);
+    return compactText(fallback);
+  }
 }
 
 function compactText(value: unknown): string {
