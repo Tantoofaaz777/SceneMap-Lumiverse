@@ -29,6 +29,16 @@ type PromptMessage = Pick<ChatMessage, "role" | "content">;
 type ActiveChat = {
   id: string;
   character_id?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+type CharacterCard = {
+  id?: string;
+  name?: unknown;
+  description?: unknown;
+  personality?: unknown;
+  scenario?: unknown;
+  extensions?: Record<string, unknown>;
 };
 
 type ReferenceContext = {
@@ -46,6 +56,7 @@ type ConnectionSummary = {
 };
 
 const activeGenerations = new Map<string, AbortController>();
+const alternateCharacterFields = ["description", "personality", "scenario"] as const;
 
 async function loadSettings(userId?: string): Promise<SceneMapSettings> {
   return mergeSettings(
@@ -258,10 +269,11 @@ async function buildCharacterReference(chat: ActiveChat, userId: string): Promis
   try {
     const character = await spindle.characters.get(chat.character_id, userId);
     if (!character) return null;
-    return taggedReferenceBlock(getEffectiveCharacterName(character), [
-      compactText(character.description),
-      compactText(character.personality),
-      compactText(character.scenario),
+    const effectiveCharacter = resolveCharacterAlternateFields(character, chat);
+    return taggedReferenceBlock(getEffectiveCharacterName(effectiveCharacter), [
+      compactText(effectiveCharacter.description),
+      compactText(effectiveCharacter.personality),
+      compactText(effectiveCharacter.scenario),
     ]);
   } catch (error) {
     spindle.log.warn(`SceneMap could not read character card context: ${(error as Error).message}`);
@@ -313,6 +325,44 @@ function getEffectiveCharacterName(character: { name?: unknown; extensions?: Rec
   return compactText(character.extensions?.alternate_character_name) || compactText(character.name) || "Character";
 }
 
+function resolveCharacterAlternateFields(character: CharacterCard, chat: ActiveChat): CharacterCard {
+  const selections = getCharacterAlternateFieldSelections(character, chat);
+  const alternateFields = getRecord(character.extensions?.alternate_fields);
+  if (!selections || !alternateFields) return character;
+
+  const overrides: Partial<CharacterCard> = {};
+  for (const field of alternateCharacterFields) {
+    const variantId = compactText(selections[field]);
+    if (!variantId) continue;
+    const variants = alternateFields[field];
+    if (!Array.isArray(variants)) continue;
+    const variant = variants.find((item) => {
+      const record = getRecord(item);
+      return record ? compactText(record.id) === variantId : false;
+    });
+    const content = compactText(getRecord(variant)?.content);
+    if (content) overrides[field] = content;
+  }
+
+  return Object.keys(overrides).length > 0 ? { ...character, ...overrides } : character;
+}
+
+function getCharacterAlternateFieldSelections(character: CharacterCard, chat: ActiveChat): Record<string, unknown> | null {
+  const metadata = chat.metadata;
+  if (!metadata) return null;
+
+  if (metadata.group === true) {
+    const byCharacter = getRecord(metadata.group_alternate_field_selections);
+    const characterId = compactText(character.id);
+    const groupSelections = characterId ? getRecord(byCharacter?.[characterId]) : null;
+    if (groupSelections) return groupSelections;
+
+    if (chat.character_id && characterId && chat.character_id !== characterId) return null;
+  }
+
+  return getRecord(metadata.alternate_field_selections);
+}
+
 function taggedReferenceBlock(name: string, parts: string[]): string | null {
   const tag = compactTagName(name) || "Reference";
   const body = parts.map(compactText).filter(Boolean).join("\n\n");
@@ -321,6 +371,12 @@ function taggedReferenceBlock(name: string, parts: string[]): string | null {
 
 function compactTagName(name: unknown): string {
   return compactText(name).replace(/[<>]/g, "").trim();
+}
+
+function getRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 async function resolvePersonaMacro(chat: ActiveChat, userId: string, fallback: unknown): Promise<string> {

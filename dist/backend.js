@@ -347,6 +347,7 @@ function trackerValueToText(key, value, depth = 0) {
 
 // src/backend.ts
 var activeGenerations = new Map;
+var alternateCharacterFields = ["description", "personality", "scenario"];
 async function loadSettings(userId) {
   return mergeSettings(await spindle.userStorage.getJson(SETTINGS_PATH, {
     fallback: defaultSettings,
@@ -548,10 +549,11 @@ async function buildCharacterReference(chat, userId) {
     const character = await spindle.characters.get(chat.character_id, userId);
     if (!character)
       return null;
-    return taggedReferenceBlock(getEffectiveCharacterName(character), [
-      compactText(character.description),
-      compactText(character.personality),
-      compactText(character.scenario)
+    const effectiveCharacter = resolveCharacterAlternateFields(character, chat);
+    return taggedReferenceBlock(getEffectiveCharacterName(effectiveCharacter), [
+      compactText(effectiveCharacter.description),
+      compactText(effectiveCharacter.personality),
+      compactText(effectiveCharacter.scenario)
     ]);
   } catch (error) {
     spindle.log.warn(`SceneMap could not read character card context: ${error.message}`);
@@ -600,6 +602,44 @@ async function buildActiveWorldInfoReference(chatId, userId) {
 function getEffectiveCharacterName(character) {
   return compactText(character.extensions?.alternate_character_name) || compactText(character.name) || "Character";
 }
+function resolveCharacterAlternateFields(character, chat) {
+  const selections = getCharacterAlternateFieldSelections(character, chat);
+  const alternateFields = getRecord(character.extensions?.alternate_fields);
+  if (!selections || !alternateFields)
+    return character;
+  const overrides = {};
+  for (const field of alternateCharacterFields) {
+    const variantId = compactText(selections[field]);
+    if (!variantId)
+      continue;
+    const variants = alternateFields[field];
+    if (!Array.isArray(variants))
+      continue;
+    const variant = variants.find((item) => {
+      const record = getRecord(item);
+      return record ? compactText(record.id) === variantId : false;
+    });
+    const content = compactText(getRecord(variant)?.content);
+    if (content)
+      overrides[field] = content;
+  }
+  return Object.keys(overrides).length > 0 ? { ...character, ...overrides } : character;
+}
+function getCharacterAlternateFieldSelections(character, chat) {
+  const metadata = chat.metadata;
+  if (!metadata)
+    return null;
+  if (metadata.group === true) {
+    const byCharacter = getRecord(metadata.group_alternate_field_selections);
+    const characterId = compactText(character.id);
+    const groupSelections = characterId ? getRecord(byCharacter?.[characterId]) : null;
+    if (groupSelections)
+      return groupSelections;
+    if (chat.character_id && characterId && chat.character_id !== characterId)
+      return null;
+  }
+  return getRecord(metadata.alternate_field_selections);
+}
 function taggedReferenceBlock(name, parts) {
   const tag = compactTagName(name) || "Reference";
   const body = parts.map(compactText).filter(Boolean).join(`
@@ -610,6 +650,9 @@ function taggedReferenceBlock(name, parts) {
 }
 function compactTagName(name) {
   return compactText(name).replace(/[<>]/g, "").trim();
+}
+function getRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 async function resolvePersonaMacro(chat, userId, fallback) {
   try {
