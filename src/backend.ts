@@ -55,7 +55,13 @@ type ConnectionSummary = {
   is_default?: boolean;
 };
 
-const activeGenerations = new Map<string, AbortController>();
+type ActiveGeneration = {
+  messageId: string;
+  userId: string;
+  controller: AbortController;
+};
+
+const activeGenerations = new Map<string, ActiveGeneration>();
 const alternateCharacterFields = ["description", "personality", "scenario"] as const;
 
 async function loadSettings(userId?: string): Promise<SceneMapSettings> {
@@ -73,6 +79,17 @@ async function saveSettings(settings: SceneMapSettings, userId: string) {
 
 function getActiveSwipeId(message: ChatMessage | null | undefined): number {
   return typeof message?.swipe_id === "number" && Number.isFinite(message.swipe_id) ? message.swipe_id : 0;
+}
+
+function generationKey(userId: string, messageId: string): string {
+  return `${userId}:${messageId}`;
+}
+
+function getActiveGenerationMessageId(userId: string): string | null {
+  for (const generation of activeGenerations.values()) {
+    if (generation.userId === userId) return generation.messageId;
+  }
+  return null;
 }
 
 function getTrackerStore(message: ChatMessage | null | undefined): Record<string, unknown> | null {
@@ -312,11 +329,6 @@ async function buildActiveWorldInfoReference(chatId: string, userId: string): Pr
   }
 }
 
-function labeledText(label: string, value: unknown): string {
-  const text = compactText(value);
-  return text ? `${label}: ${text}` : "";
-}
-
 function getEffectiveCharacterName(character: { name?: unknown; extensions?: Record<string, unknown> }): string {
   return compactText(character.extensions?.alternate_character_name) || compactText(character.name) || "Character";
 }
@@ -435,7 +447,7 @@ async function buildState(userId: string): Promise<SceneMapState> {
     messagesBehind: latest ? countAssistantMessagesAfter(messages, latest.messageId) : 0,
     activeMessageId: activeMessage?.id ?? null,
     activeSwipeId: activeMessage ? getActiveSwipeId(activeMessage) : null,
-    generatingMessageId: [...activeGenerations.keys()][0] ?? null,
+    generatingMessageId: getActiveGenerationMessageId(userId),
     connections: await listConnections(userId),
   };
 }
@@ -478,9 +490,11 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
   const target = findTargetMessage(messages, messageId);
   if (!target) throw new Error("No assistant message found for SceneMap.");
   if (target.role !== "assistant") throw new Error("SceneMap can only track assistant messages.");
-  if (activeGenerations.has(target.id)) {
-    activeGenerations.get(target.id)?.abort();
-    activeGenerations.delete(target.id);
+  const activeKey = generationKey(userId, target.id);
+  const activeGeneration = activeGenerations.get(activeKey);
+  if (activeGeneration) {
+    activeGeneration.controller.abort();
+    activeGenerations.delete(activeKey);
     if (userId) await pushState(userId);
     spindle.toast.info("SceneMap generation cancelled.", { userId });
     return;
@@ -502,7 +516,7 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
   promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
 
   const controller = new AbortController();
-  activeGenerations.set(target.id, controller);
+  activeGenerations.set(activeKey, { messageId: target.id, userId, controller });
   if (userId) await pushState(userId);
   spindle.toast.info("Mapping this scene...", { title: "SceneMap", userId });
 
@@ -527,7 +541,7 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
       throw error;
     }
   } finally {
-    activeGenerations.delete(target.id);
+    activeGenerations.delete(activeKey);
     if (userId) await pushState(userId);
     else await refreshMacroValue();
   }

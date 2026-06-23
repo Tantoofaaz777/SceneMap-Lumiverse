@@ -360,6 +360,16 @@ async function saveSettings(settings, userId) {
 function getActiveSwipeId(message) {
   return typeof message?.swipe_id === "number" && Number.isFinite(message.swipe_id) ? message.swipe_id : 0;
 }
+function generationKey(userId, messageId) {
+  return `${userId}:${messageId}`;
+}
+function getActiveGenerationMessageId(userId) {
+  for (const generation of activeGenerations.values()) {
+    if (generation.userId === userId)
+      return generation.messageId;
+  }
+  return null;
+}
 function getTrackerStore(message) {
   const data = message?.metadata?.[MESSAGE_METADATA_KEY];
   if (!data || typeof data !== "object")
@@ -709,7 +719,7 @@ async function buildState(userId) {
     messagesBehind: latest ? countAssistantMessagesAfter(messages, latest.messageId) : 0,
     activeMessageId: activeMessage?.id ?? null,
     activeSwipeId: activeMessage ? getActiveSwipeId(activeMessage) : null,
-    generatingMessageId: [...activeGenerations.keys()][0] ?? null,
+    generatingMessageId: getActiveGenerationMessageId(userId),
     connections: await listConnections(userId)
   };
 }
@@ -751,9 +761,11 @@ async function generateTracker(messageId, userId) {
     throw new Error("No assistant message found for SceneMap.");
   if (target.role !== "assistant")
     throw new Error("SceneMap can only track assistant messages.");
-  if (activeGenerations.has(target.id)) {
-    activeGenerations.get(target.id)?.abort();
-    activeGenerations.delete(target.id);
+  const activeKey = generationKey(userId, target.id);
+  const activeGeneration = activeGenerations.get(activeKey);
+  if (activeGeneration) {
+    activeGeneration.controller.abort();
+    activeGenerations.delete(activeKey);
     if (userId)
       await pushState(userId);
     spindle.toast.info("SceneMap generation cancelled.", { userId });
@@ -775,7 +787,7 @@ async function generateTracker(messageId, userId) {
     promptMessages.unshift(referenceMessage);
   promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
   const controller = new AbortController;
-  activeGenerations.set(target.id, controller);
+  activeGenerations.set(activeKey, { messageId: target.id, userId, controller });
   if (userId)
     await pushState(userId);
   spindle.toast.info("Mapping this scene...", { title: "SceneMap", userId });
@@ -800,7 +812,7 @@ async function generateTracker(messageId, userId) {
       throw error;
     }
   } finally {
-    activeGenerations.delete(target.id);
+    activeGenerations.delete(activeKey);
     if (userId)
       await pushState(userId);
     else
