@@ -32,6 +32,7 @@ export interface SceneMapSettings {
   connectionId: string;
   maxResponseTokens: number;
   autoGenerateAiTrackers: boolean;
+  autoGenerateInterval: number;
   schemaPreset: string;
   schemaPresets: Record<string, SceneMapPreset>;
   includeLastXMessages: number;
@@ -210,6 +211,7 @@ export const defaultSettings: SceneMapSettings = {
   connectionId: "",
   maxResponseTokens: 16000,
   autoGenerateAiTrackers: false,
+  autoGenerateInterval: 1,
   schemaPreset: "default",
   schemaPresets: {
     default: {

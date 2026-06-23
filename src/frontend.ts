@@ -74,7 +74,7 @@ export function setup(ctx: SpindleFrontendContext) {
     ctx.events.on("SWIPE_EDITED", () => requestState()),
     ctx.events.on("GENERATION_ENDED", (payload: any) => {
       if (state.settings.autoGenerateAiTrackers && payload?.messageId && !payload?.error) {
-        send({ type: "generate_tracker", messageId: payload.messageId });
+        send({ type: "maybe_auto_generate", messageId: payload.messageId });
         return;
       }
       requestState();
@@ -197,6 +197,10 @@ function renderSettings() {
         <span class="scenemap-switch" aria-hidden="true"></span>
       </label>
       <label>
+        <span>Interval</span>
+        <input type="number" min="1" step="1" data-setting="autoGenerateInterval" value="${settings.autoGenerateInterval > 1 ? settings.autoGenerateInterval : ""}" placeholder="1 = every message">
+      </label>
+      <label>
         <span>Max response tokens</span>
         <input type="number" min="1" step="1" data-setting="maxResponseTokens" value="${settings.maxResponseTokens}">
       </label>
@@ -293,6 +297,8 @@ function updateSettingFromControl(target: HTMLInputElement | HTMLSelectElement, 
   const settings = mergeSettings(state.settings);
   if (key === "autoGenerateAiTrackers") {
     settings.autoGenerateAiTrackers = (target as HTMLInputElement).checked;
+  } else if (key === "autoGenerateInterval") {
+    settings.autoGenerateInterval = Math.max(1, Math.floor(Number(target.value) || 1));
   } else if (key === "maxResponseTokens" || key === "includeLastXMessages") {
     (settings as any)[key] = Math.max(0, Math.floor(Number(target.value) || 0));
   } else {

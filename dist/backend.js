@@ -153,6 +153,7 @@ var defaultSettings = {
   connectionId: "",
   maxResponseTokens: 16000,
   autoGenerateAiTrackers: false,
+  autoGenerateInterval: 1,
   schemaPreset: "default",
   schemaPresets: {
     default: {
@@ -457,6 +458,13 @@ function countAssistantMessagesAfter(messages, messageId) {
   if (index === -1)
     return 0;
   return messages.slice(index + 1).filter((message) => message.role === "assistant").length;
+}
+function countAssistantMessagesBetween(messages, afterMessageId, throughMessageId) {
+  const startIndex = afterMessageId ? messages.findIndex((message) => message.id === afterMessageId) + 1 : 0;
+  const endIndex = messages.findIndex((message) => message.id === throughMessageId);
+  if (endIndex === -1)
+    return 0;
+  return messages.slice(Math.max(0, startIndex), endIndex + 1).filter((message) => message.role === "assistant").length;
 }
 function findTargetMessage(messages, messageId) {
   if (messageId)
@@ -819,6 +827,36 @@ async function generateTracker(messageId, userId) {
       await refreshMacroValue();
   }
 }
+async function maybeAutoGenerateTracker(messageId, userId) {
+  const settings = await loadSettings(userId);
+  if (!settings.autoGenerateAiTrackers) {
+    await pushState(userId);
+    return;
+  }
+  const interval = Math.max(1, Math.floor(settings.autoGenerateInterval || 1));
+  const { messages } = await getActiveContext(userId);
+  const target = findTargetMessage(messages, messageId);
+  if (!target || target.role !== "assistant") {
+    await pushState(userId);
+    return;
+  }
+  if (getMessageTracker(target)) {
+    await pushState(userId);
+    return;
+  }
+  const activeKey = generationKey(userId, target.id);
+  if (activeGenerations.has(activeKey)) {
+    await pushState(userId);
+    return;
+  }
+  const latest = getLatestTrackerEntry(messages);
+  const messagesDue = countAssistantMessagesBetween(messages, latest?.messageId ?? null, target.id);
+  if (messagesDue >= interval) {
+    await generateTracker(target.id, userId);
+  } else {
+    await pushState(userId);
+  }
+}
 async function editTracker(messageId, data, userId) {
   if (!userId)
     throw new Error("SceneMap needs a user context before editing a tracker.");
@@ -897,6 +935,9 @@ spindle.onFrontendMessage(async (payload, userId) => {
       }
       case "generate_tracker":
         await generateTracker(payload.messageId ?? null, userId);
+        break;
+      case "maybe_auto_generate":
+        await maybeAutoGenerateTracker(payload.messageId ?? null, userId);
         break;
       case "edit_tracker":
         await editTracker(payload.messageId, payload.data, userId);
