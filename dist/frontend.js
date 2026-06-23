@@ -414,12 +414,13 @@ function statusText() {
   if (state.generatingMessageId)
     return "Mapping this scene";
   const autoText = autoGenerateStatusText();
-  const suffix = autoText ? ` · ${autoText}` : "";
+  if (autoText)
+    return autoText;
   if (!state.latest)
-    return `This scene is unmapped${suffix}`;
+    return "This scene is unmapped";
   if (state.messagesBehind > 0)
-    return `SceneMap is ${state.messagesBehind} message${state.messagesBehind === 1 ? "" : "s"} behind${suffix}`;
-  return `SceneMap is updated${suffix}`;
+    return `SceneMap is ${state.messagesBehind} message${state.messagesBehind === 1 ? "" : "s"} behind`;
+  return "SceneMap is updated";
 }
 function autoGenerateStatusText() {
   if (!state.settings.autoGenerateAiTrackers || state.autoGenerateMessagesRemaining == null)
