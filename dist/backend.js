@@ -187,6 +187,10 @@ function getPresetPrompt(settings, presetKey = settings.schemaPreset) {
   const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   return typeof preset?.promptJson === "string" ? preset.promptJson : settings.promptJson;
 }
+function getPresetLayout(settings, presetKey = settings.schemaPreset) {
+  const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  return preset?.displayLayout?.sections?.length ? preset.displayLayout : settings.displayLayout;
+}
 function schemaToExample(schema) {
   if (!schema || typeof schema !== "object")
     return null;
@@ -241,17 +245,18 @@ function formatPrimitive(value) {
     return String(value);
   return JSON.stringify(value);
 }
-function trackerToText(tracker) {
+function trackerToText(tracker, layout) {
   if (!tracker || typeof tracker !== "object" || Array.isArray(tracker))
     return "";
   const record = tracker;
-  const sceneLines = renderSceneMapSummary(record);
+  const progressPaths = collectProgressPaths(layout);
+  const sceneLines = renderSceneMapSummary(record, progressPaths);
   if (sceneLines.length > 0)
     return sceneLines.join(`
 `);
   const lines = [];
   for (const [key, value] of Object.entries(record)) {
-    const child = trackerValueToText(key, value);
+    const child = trackerValueToText(key, value, 0, key, progressPaths);
     if (child.length === 0)
       continue;
     if (lines.length > 0)
@@ -261,11 +266,11 @@ function trackerToText(tracker) {
   return lines.join(`
 `);
 }
-function renderSceneMapSummary(tracker) {
+function renderSceneMapSummary(tracker, progressPaths) {
   const lines = [];
-  pushPrimitiveLine(lines, "Time", tracker.time);
-  pushPrimitiveLine(lines, "Location", tracker.location);
-  pushPrimitiveLine(lines, "Weather", tracker.weather);
+  pushPrimitiveLine(lines, "Time", tracker.time, "time", progressPaths);
+  pushPrimitiveLine(lines, "Location", tracker.location, "location", progressPaths);
+  pushPrimitiveLine(lines, "Weather", tracker.weather, "weather", progressPaths);
   const topics = tracker.topics && typeof tracker.topics === "object" && !Array.isArray(tracker.topics) ? tracker.topics : null;
   if (topics) {
     const tone = [
@@ -288,7 +293,7 @@ function renderSceneMapSummary(tracker) {
     for (const character of tracker.characters) {
       if (!character || typeof character !== "object" || Array.isArray(character))
         continue;
-      const characterLines = renderCharacterSummary(character);
+      const characterLines = renderCharacterSummary(character, progressPaths);
       if (characterLines.length === 0)
         continue;
       if (lines.length > 0)
@@ -298,25 +303,25 @@ function renderSceneMapSummary(tracker) {
   }
   return lines;
 }
-function pushPrimitiveLine(lines, label, value) {
-  const text = formatPrimitive(value);
+function pushPrimitiveLine(lines, label, value, path, progressPaths) {
+  const text = formatTrackerTextValue(path, value, progressPaths);
   if (text)
     lines.push(`${label}: ${text}`);
 }
-function renderCharacterSummary(character) {
+function renderCharacterSummary(character, progressPaths) {
   const name = formatPrimitive(character.name) || "Character";
   const lines = [`${name}:`];
   for (const [key, value] of Object.entries(character)) {
     if (key === "name")
       continue;
-    const text = formatPrimitive(value);
+    const text = formatTrackerTextValue(`characters.${key}`, value, progressPaths);
     if (!text)
       continue;
     lines.push(`- ${humanizeTrackerKey(key)}: ${text}`);
   }
   return lines.length > 1 ? lines : [];
 }
-function trackerValueToText(key, value, depth = 0) {
+function trackerValueToText(key, value, depth = 0, path = key, progressPaths = new Set) {
   const indent = "  ".repeat(depth);
   const label = humanizeTrackerKey(key);
   if (value === null || value === undefined || value === "")
@@ -331,9 +336,9 @@ function trackerValueToText(key, value, depth = 0) {
         if (entries.length === 0)
           continue;
         const [firstKey, firstValue] = entries[0];
-        lines.push(`${indent}- ${humanizeTrackerKey(firstKey)}: ${formatPrimitive(firstValue)}`);
+        lines.push(`${indent}- ${humanizeTrackerKey(firstKey)}: ${formatTrackerTextValue(`${path}.${firstKey}`, firstValue, progressPaths)}`);
         for (const [childKey, childValue] of entries.slice(1)) {
-          lines.push(...trackerValueToText(childKey, childValue, depth + 1));
+          lines.push(...trackerValueToText(childKey, childValue, depth + 1, `${path}.${childKey}`, progressPaths));
         }
       } else {
         lines.push(`${indent}- ${formatPrimitive(item)}`);
@@ -344,11 +349,52 @@ function trackerValueToText(key, value, depth = 0) {
   if (typeof value === "object") {
     const lines = [`${indent}${label}:`];
     for (const [childKey, childValue] of Object.entries(value)) {
-      lines.push(...trackerValueToText(childKey, childValue, depth));
+      lines.push(...trackerValueToText(childKey, childValue, depth, `${path}.${childKey}`, progressPaths));
     }
     return lines.length > 1 ? lines : [];
   }
-  return [`${indent}${label}: ${formatPrimitive(value)}`];
+  return [`${indent}${label}: ${formatTrackerTextValue(path, value, progressPaths)}`];
+}
+function collectProgressPaths(layout) {
+  const paths = new Set;
+  for (const section of layout?.sections ?? []) {
+    for (const field of section.fields) {
+      if (field.display === "progress")
+        paths.add(field.path);
+      for (const child of field.fields ?? []) {
+        if (child.display === "progress")
+          paths.add(`${field.path}.${child.path}`);
+      }
+    }
+  }
+  return paths;
+}
+function formatTrackerTextValue(path, value, progressPaths) {
+  if (progressPaths.has(path))
+    return formatProgressText(value) || formatPrimitive(value);
+  return formatPrimitive(value);
+}
+function formatProgressText(value) {
+  let numeric = null;
+  if (typeof value === "number" && Number.isFinite(value))
+    numeric = value;
+  if (typeof value === "string") {
+    const ratio = value.match(/(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)/);
+    if (ratio) {
+      const current = Number(ratio[1]);
+      const max = Number(ratio[2]);
+      if (Number.isFinite(current) && Number.isFinite(max) && max > 0)
+        numeric = current / max * 100;
+    } else {
+      const match = value.match(/-?\d+(?:\.\d+)?/);
+      if (match)
+        numeric = Number(match[0]);
+    }
+  }
+  if (numeric === null || !Number.isFinite(numeric))
+    return null;
+  const rounded = Math.round(Math.max(0, Math.min(100, numeric)));
+  return `${rounded}% of 100%`;
 }
 
 // src/backend.ts
@@ -746,8 +792,11 @@ async function buildState(userId) {
 }
 async function pushState(userId) {
   const state = await buildState(userId);
+  const { chat } = await getActiveContext(userId);
+  const presetKey = getChatPresetKey(chat, state.settings);
+  const layout = getPresetLayout(state.settings, presetKey);
   spindle.sendToFrontend({ type: "state", state }, userId);
-  spindle.updateMacroValue("scenemap", trackerToText(state.latest?.displayData ?? state.latest?.data ?? null));
+  spindle.updateMacroValue("scenemap", trackerToText(state.latest?.displayData ?? state.latest?.data ?? null, layout));
 }
 async function refreshMacroValue() {
   spindle.updateMacroValue("scenemap", "");

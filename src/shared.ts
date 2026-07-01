@@ -314,15 +314,16 @@ export function formatPrimitive(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function trackerToText(tracker: unknown): string {
+export function trackerToText(tracker: unknown, layout?: TrackerBoardDisplayLayout): string {
   if (!tracker || typeof tracker !== "object" || Array.isArray(tracker)) return "";
   const record = tracker as Record<string, unknown>;
-  const sceneLines = renderSceneMapSummary(record);
+  const progressPaths = collectProgressPaths(layout);
+  const sceneLines = renderSceneMapSummary(record, progressPaths);
   if (sceneLines.length > 0) return sceneLines.join("\n");
 
   const lines: string[] = [];
   for (const [key, value] of Object.entries(record)) {
-    const child = trackerValueToText(key, value);
+    const child = trackerValueToText(key, value, 0, key, progressPaths);
     if (child.length === 0) continue;
     if (lines.length > 0) lines.push("");
     lines.push(...child);
@@ -330,11 +331,11 @@ export function trackerToText(tracker: unknown): string {
   return lines.join("\n");
 }
 
-function renderSceneMapSummary(tracker: Record<string, unknown>): string[] {
+function renderSceneMapSummary(tracker: Record<string, unknown>, progressPaths: Set<string>): string[] {
   const lines: string[] = [];
-  pushPrimitiveLine(lines, "Time", tracker.time);
-  pushPrimitiveLine(lines, "Location", tracker.location);
-  pushPrimitiveLine(lines, "Weather", tracker.weather);
+  pushPrimitiveLine(lines, "Time", tracker.time, "time", progressPaths);
+  pushPrimitiveLine(lines, "Location", tracker.location, "location", progressPaths);
+  pushPrimitiveLine(lines, "Weather", tracker.weather, "weather", progressPaths);
 
   const topics = tracker.topics && typeof tracker.topics === "object" && !Array.isArray(tracker.topics)
     ? tracker.topics as Record<string, unknown>
@@ -359,7 +360,7 @@ function renderSceneMapSummary(tracker: Record<string, unknown>): string[] {
   if (Array.isArray(tracker.characters) && tracker.characters.length > 0) {
     for (const character of tracker.characters) {
       if (!character || typeof character !== "object" || Array.isArray(character)) continue;
-      const characterLines = renderCharacterSummary(character as Record<string, unknown>);
+      const characterLines = renderCharacterSummary(character as Record<string, unknown>, progressPaths);
       if (characterLines.length === 0) continue;
       if (lines.length > 0) lines.push("");
       lines.push(...characterLines);
@@ -369,24 +370,24 @@ function renderSceneMapSummary(tracker: Record<string, unknown>): string[] {
   return lines;
 }
 
-function pushPrimitiveLine(lines: string[], label: string, value: unknown) {
-  const text = formatPrimitive(value);
+function pushPrimitiveLine(lines: string[], label: string, value: unknown, path: string, progressPaths: Set<string>) {
+  const text = formatTrackerTextValue(path, value, progressPaths);
   if (text) lines.push(`${label}: ${text}`);
 }
 
-function renderCharacterSummary(character: Record<string, unknown>): string[] {
+function renderCharacterSummary(character: Record<string, unknown>, progressPaths: Set<string>): string[] {
   const name = formatPrimitive(character.name) || "Character";
   const lines = [`${name}:`];
   for (const [key, value] of Object.entries(character)) {
     if (key === "name") continue;
-    const text = formatPrimitive(value);
+    const text = formatTrackerTextValue(`characters.${key}`, value, progressPaths);
     if (!text) continue;
     lines.push(`- ${humanizeTrackerKey(key)}: ${text}`);
   }
   return lines.length > 1 ? lines : [];
 }
 
-function trackerValueToText(key: string, value: unknown, depth = 0): string[] {
+function trackerValueToText(key: string, value: unknown, depth = 0, path = key, progressPaths = new Set<string>()): string[] {
   const indent = "  ".repeat(depth);
   const label = humanizeTrackerKey(key);
   if (value === null || value === undefined || value === "") return [];
@@ -398,9 +399,9 @@ function trackerValueToText(key: string, value: unknown, depth = 0): string[] {
         const entries = Object.entries(item as Record<string, unknown>).filter(([, child]) => child !== null && child !== undefined && child !== "");
         if (entries.length === 0) continue;
         const [firstKey, firstValue] = entries[0];
-        lines.push(`${indent}- ${humanizeTrackerKey(firstKey)}: ${formatPrimitive(firstValue)}`);
+        lines.push(`${indent}- ${humanizeTrackerKey(firstKey)}: ${formatTrackerTextValue(`${path}.${firstKey}`, firstValue, progressPaths)}`);
         for (const [childKey, childValue] of entries.slice(1)) {
-          lines.push(...trackerValueToText(childKey, childValue, depth + 1));
+          lines.push(...trackerValueToText(childKey, childValue, depth + 1, `${path}.${childKey}`, progressPaths));
         }
       } else {
         lines.push(`${indent}- ${formatPrimitive(item)}`);
@@ -411,9 +412,46 @@ function trackerValueToText(key: string, value: unknown, depth = 0): string[] {
   if (typeof value === "object") {
     const lines = [`${indent}${label}:`];
     for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
-      lines.push(...trackerValueToText(childKey, childValue, depth));
+      lines.push(...trackerValueToText(childKey, childValue, depth, `${path}.${childKey}`, progressPaths));
     }
     return lines.length > 1 ? lines : [];
   }
-  return [`${indent}${label}: ${formatPrimitive(value)}`];
+  return [`${indent}${label}: ${formatTrackerTextValue(path, value, progressPaths)}`];
+}
+
+function collectProgressPaths(layout?: TrackerBoardDisplayLayout): Set<string> {
+  const paths = new Set<string>();
+  for (const section of layout?.sections ?? []) {
+    for (const field of section.fields) {
+      if (field.display === "progress") paths.add(field.path);
+      for (const child of field.fields ?? []) {
+        if (child.display === "progress") paths.add(`${field.path}.${child.path}`);
+      }
+    }
+  }
+  return paths;
+}
+
+function formatTrackerTextValue(path: string, value: unknown, progressPaths: Set<string>): string {
+  if (progressPaths.has(path)) return formatProgressText(value) || formatPrimitive(value);
+  return formatPrimitive(value);
+}
+
+function formatProgressText(value: unknown): string | null {
+  let numeric: number | null = null;
+  if (typeof value === "number" && Number.isFinite(value)) numeric = value;
+  if (typeof value === "string") {
+    const ratio = value.match(/(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)/);
+    if (ratio) {
+      const current = Number(ratio[1]);
+      const max = Number(ratio[2]);
+      if (Number.isFinite(current) && Number.isFinite(max) && max > 0) numeric = (current / max) * 100;
+    } else {
+      const match = value.match(/-?\d+(?:\.\d+)?/);
+      if (match) numeric = Number(match[0]);
+    }
+  }
+  if (numeric === null || !Number.isFinite(numeric)) return null;
+  const rounded = Math.round(Math.max(0, Math.min(100, numeric)));
+  return `${rounded}% of 100%`;
 }

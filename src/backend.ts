@@ -3,6 +3,7 @@ import {
   MESSAGE_METADATA_KEY,
   SETTINGS_PATH,
   defaultSettings,
+  getPresetLayout,
   getPresetPrompt,
   mergeSettings,
   parseModelJson,
@@ -475,8 +476,11 @@ async function buildState(userId: string): Promise<SceneMapState> {
 
 async function pushState(userId: string) {
   const state = await buildState(userId);
+  const { chat } = await getActiveContext(userId);
+  const presetKey = getChatPresetKey(chat, state.settings);
+  const layout = getPresetLayout(state.settings, presetKey);
   spindle.sendToFrontend({ type: "state", state }, userId);
-  spindle.updateMacroValue("scenemap", trackerToText(state.latest?.displayData ?? state.latest?.data ?? null));
+  spindle.updateMacroValue("scenemap", trackerToText(state.latest?.displayData ?? state.latest?.data ?? null, layout));
 }
 
 async function refreshMacroValue() {
