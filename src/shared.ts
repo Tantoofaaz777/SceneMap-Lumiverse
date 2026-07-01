@@ -3,7 +3,7 @@ export const SETTINGS_PATH = "settings.json";
 export const CHAT_METADATA_KEY = "scenemap";
 export const MESSAGE_METADATA_KEY = "scenemap";
 
-export type TrackerFieldDisplay = "text" | "subtle" | "mono" | "chips" | "character_cards";
+export type TrackerFieldDisplay = "text" | "subtle" | "mono" | "chips" | "progress" | "character_cards";
 
 export interface TrackerBoardField {
   path: string;

@@ -657,7 +657,7 @@ function normalizeImportedField(value) {
   };
 }
 function isTrackerFieldDisplay(value) {
-  return ["text", "subtle", "mono", "chips", "character_cards"].includes(value);
+  return ["text", "subtle", "mono", "chips", "progress", "character_cards"].includes(value);
 }
 function openNameEditor(title, initialValue, submitLabel, onSave) {
   const ctx = ctxRef;
@@ -989,7 +989,8 @@ function renderDisplayOptions(selected, allowCards) {
     { value: "text", label: "Text" },
     { value: "subtle", label: "Subtle" },
     { value: "mono", label: "Mono" },
-    { value: "chips", label: "Chips" }
+    { value: "chips", label: "Chips" },
+    { value: "progress", label: "Progress" }
   ];
   if (allowCards)
     displays.push({ value: "character_cards", label: "Cards" });
@@ -1208,10 +1209,29 @@ function renderField(field, tracker) {
   if (display === "chips") {
     return `<div class="scenemap-field"><span>${label}</span><div class="scenemap-chips">${toChips(value).map((item) => `<b>${escapeHtml(item)}</b>`).join("")}</div></div>`;
   }
+  if (display === "progress")
+    return renderProgressField(label, value);
   if (display === "character_cards" && Array.isArray(value)) {
     return `<div class="scenemap-character-grid">${value.map((item, index) => renderCharacterCard(item, index, field.fields ?? [])).join("")}</div>`;
   }
   return `<div class="scenemap-field"><span>${label}</span><p class="${display === "subtle" ? "subtle" : ""} ${display === "mono" ? "mono" : ""}">${escapeHtml(formatDisplayValue(value))}</p></div>`;
+}
+function renderProgressField(label, value) {
+  const progress = parseProgressValue(value);
+  if (!progress)
+    return `<div class="scenemap-field"><span>${label}</span><p>${escapeHtml(formatDisplayValue(value))}</p></div>`;
+  const tone = progress.value < 34 ? "danger" : progress.value < 67 ? "warning" : "success";
+  return `
+    <div class="scenemap-field scenemap-progress-field" data-progress-tone="${tone}">
+      <div class="scenemap-progress-head">
+        <span>${label}</span>
+        <strong>${progress.label}</strong>
+      </div>
+      <div class="scenemap-progress-track" role="meter" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.value}">
+        <i style="width: ${progress.value}%"></i>
+      </div>
+    </div>
+  `;
 }
 function renderCharacterCard(value, index, fields) {
   const record = getRecord(value);
@@ -1246,6 +1266,29 @@ function toChips(value) {
   if (typeof value === "string")
     return value.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 32);
   return [];
+}
+function parseProgressValue(value) {
+  let numeric = null;
+  if (typeof value === "number" && Number.isFinite(value))
+    numeric = value;
+  if (typeof value === "string") {
+    const ratio = value.match(/(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)/);
+    if (ratio) {
+      const current = Number(ratio[1]);
+      const max = Number(ratio[2]);
+      if (Number.isFinite(current) && Number.isFinite(max) && max > 0)
+        numeric = current / max * 100;
+    } else {
+      const match = value.match(/-?\d+(?:\.\d+)?/);
+      if (match)
+        numeric = Number(match[0]);
+    }
+  }
+  if (numeric === null || !Number.isFinite(numeric))
+    return null;
+  const clamped = Math.max(0, Math.min(100, numeric));
+  const rounded = Math.round(clamped);
+  return { value: rounded, label: `${rounded}%` };
 }
 function formatDisplayValue(value) {
   if (Array.isArray(value))
@@ -1300,6 +1343,14 @@ var styles = `
 .scenemap-field p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; }
 .scenemap-field p.subtle { color: var(--lumiverse-text-muted); }
 .scenemap-field p.mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-style: italic; }
+.scenemap-progress-field { gap: 6px; }
+.scenemap-progress-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.scenemap-progress-head strong { color: var(--lumiverse-text); font-size: 11px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.scenemap-progress-track { height: 8px; border-radius: 999px; overflow: hidden; border: 1px solid var(--lumiverse-border); background: color-mix(in srgb, var(--lumiverse-fill) 82%, transparent); }
+.scenemap-progress-track i { display: block; height: 100%; min-width: 2px; border-radius: inherit; background: var(--lumiverse-primary, var(--lumiverse-accent)); box-shadow: 0 0 10px color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 35%, transparent); }
+.scenemap-progress-field[data-progress-tone="success"] .scenemap-progress-track i { background: var(--lumiverse-success, var(--lumiverse-primary, var(--lumiverse-accent))); box-shadow: 0 0 10px color-mix(in srgb, var(--lumiverse-success, var(--lumiverse-primary, var(--lumiverse-accent))) 35%, transparent); }
+.scenemap-progress-field[data-progress-tone="warning"] .scenemap-progress-track i { background: var(--lumiverse-warning, var(--lumiverse-primary, var(--lumiverse-accent))); box-shadow: 0 0 10px color-mix(in srgb, var(--lumiverse-warning, var(--lumiverse-primary, var(--lumiverse-accent))) 35%, transparent); }
+.scenemap-progress-field[data-progress-tone="danger"] .scenemap-progress-track i { background: var(--lumiverse-danger, var(--lumiverse-primary, var(--lumiverse-accent))); box-shadow: 0 0 10px color-mix(in srgb, var(--lumiverse-danger, var(--lumiverse-primary, var(--lumiverse-accent))) 35%, transparent); }
 .scenemap-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .scenemap-chips b { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 650; }
 .scenemap-character-grid { display: flex; flex-direction: column; gap: 14px; }
