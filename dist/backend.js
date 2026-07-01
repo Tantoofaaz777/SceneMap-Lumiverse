@@ -172,15 +172,20 @@ function mergeSettings(value) {
   const base = cloneDefaultSettings();
   if (!value || typeof value !== "object")
     return base;
+  const schemaPresets = {
+    ...base.schemaPresets,
+    ...value.schemaPresets ?? {}
+  };
   return {
     ...base,
     ...value,
-    schemaPresets: {
-      ...base.schemaPresets,
-      ...value.schemaPresets ?? {}
-    },
+    schemaPresets,
     displayLayout: value.displayLayout?.sections?.length ? value.displayLayout : base.displayLayout
   };
+}
+function getPresetPrompt(settings, presetKey = settings.schemaPreset) {
+  const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  return typeof preset?.promptJson === "string" ? preset.promptJson : settings.promptJson;
 }
 function schemaToExample(schema) {
   if (!schema || typeof schema !== "object")
@@ -791,7 +796,7 @@ async function generateTracker(messageId, userId) {
   const presetKey = getChatPresetKey(chat, settings);
   const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   const previousTracker = getPreviousTrackerJson(messages, target.id, !!getMessageTracker(target));
-  const finalPrompt = renderPrompt(settings.promptJson, {
+  const finalPrompt = renderPrompt(getPresetPrompt(settings, presetKey), {
     schema: JSON.stringify(preset.value, null, 2),
     previous_tracker: previousTracker,
     example_response: JSON.stringify(schemaToExample(preset.value), null, 2)

@@ -3,6 +3,7 @@ import {
   MESSAGE_METADATA_KEY,
   SETTINGS_PATH,
   defaultSettings,
+  getPresetPrompt,
   mergeSettings,
   parseModelJson,
   renderPrompt,
@@ -524,7 +525,7 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
   const presetKey = getChatPresetKey(chat, settings);
   const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   const previousTracker = getPreviousTrackerJson(messages, target.id, !!getMessageTracker(target));
-  const finalPrompt = renderPrompt(settings.promptJson, {
+  const finalPrompt = renderPrompt(getPresetPrompt(settings, presetKey), {
     schema: JSON.stringify(preset.value, null, 2),
     previous_tracker: previousTracker,
     example_response: JSON.stringify(schemaToExample(preset.value), null, 2),

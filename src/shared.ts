@@ -24,6 +24,8 @@ export interface TrackerBoardDisplayLayout {
 export interface SceneMapPreset {
   name: string;
   value: Record<string, unknown>;
+  promptJson?: string;
+  displayLayout?: TrackerBoardDisplayLayout;
 }
 
 export interface SceneMapSettings {
@@ -232,15 +234,26 @@ export function cloneDefaultSettings(): SceneMapSettings {
 export function mergeSettings(value: Partial<SceneMapSettings> | null | undefined): SceneMapSettings {
   const base = cloneDefaultSettings();
   if (!value || typeof value !== "object") return base;
+  const schemaPresets = {
+    ...base.schemaPresets,
+    ...(value.schemaPresets ?? {}),
+  };
   return {
     ...base,
     ...value,
-    schemaPresets: {
-      ...base.schemaPresets,
-      ...(value.schemaPresets ?? {}),
-    },
+    schemaPresets,
     displayLayout: value.displayLayout?.sections?.length ? value.displayLayout : base.displayLayout,
   };
+}
+
+export function getPresetPrompt(settings: SceneMapSettings, presetKey = settings.schemaPreset): string {
+  const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  return typeof preset?.promptJson === "string" ? preset.promptJson : settings.promptJson;
+}
+
+export function getPresetLayout(settings: SceneMapSettings, presetKey = settings.schemaPreset): TrackerBoardDisplayLayout {
+  const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  return preset?.displayLayout?.sections?.length ? preset.displayLayout : settings.displayLayout;
 }
 
 export function schemaToExample(schema: any): unknown {

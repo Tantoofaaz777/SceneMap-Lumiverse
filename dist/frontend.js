@@ -168,15 +168,24 @@ function mergeSettings(value) {
   const base = cloneDefaultSettings();
   if (!value || typeof value !== "object")
     return base;
+  const schemaPresets = {
+    ...base.schemaPresets,
+    ...value.schemaPresets ?? {}
+  };
   return {
     ...base,
     ...value,
-    schemaPresets: {
-      ...base.schemaPresets,
-      ...value.schemaPresets ?? {}
-    },
+    schemaPresets,
     displayLayout: value.displayLayout?.sections?.length ? value.displayLayout : base.displayLayout
   };
+}
+function getPresetPrompt(settings, presetKey = settings.schemaPreset) {
+  const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  return typeof preset?.promptJson === "string" ? preset.promptJson : settings.promptJson;
+}
+function getPresetLayout(settings, presetKey = settings.schemaPreset) {
+  const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  return preset?.displayLayout?.sections?.length ? preset.displayLayout : settings.displayLayout;
 }
 function humanizeTrackerKey(key) {
   return key.replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\s+/g, " ").trim().replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1));
@@ -322,6 +331,7 @@ function renderDrawer() {
   if (!rootRef)
     return;
   const settings = mergeSettings(state.settings);
+  const layout = getPresetLayout(settings);
   const latest = state.latest;
   rootRef.innerHTML = `
     <div class="scenemap-shell">
@@ -337,7 +347,7 @@ function renderDrawer() {
       <p class="scenemap-status ${state.generatingMessageId ? "is-generating" : ""}">${statusMarkup()}</p>
 
       <section class="scenemap-card scenemap-board">
-        ${latest ? renderTracker(latest.displayData ?? latest.data, settings.displayLayout) : `<div class="scenemap-empty">Generate a SceneMap for this swipe</div>`}
+        ${latest ? renderTracker(latest.displayData ?? latest.data, layout) : `<div class="scenemap-empty">Generate a SceneMap for this swipe</div>`}
       </section>
     </div>
   `;
@@ -499,7 +509,7 @@ function updateSettingFromControl(target, key) {
   }
   state = { ...state, settings };
   if (key === "schemaPreset")
-    renderSettings();
+    render();
 }
 function createPreset() {
   const settings = mergeSettings(state.settings);
@@ -508,7 +518,9 @@ function createPreset() {
     const key = uniquePresetKey(slugifyPresetName(name), settings.schemaPresets);
     settings.schemaPresets[key] = {
       name,
-      value: JSON.parse(JSON.stringify(activePreset.value))
+      value: JSON.parse(JSON.stringify(activePreset.value)),
+      promptJson: getPresetPrompt(settings),
+      displayLayout: cloneLayout(getPresetLayout(settings))
     };
     state = { ...state, settings: { ...settings, schemaPreset: key } };
     render();
@@ -553,8 +565,8 @@ function exportPreset() {
     version: 1,
     name: preset.name,
     schema: preset.value,
-    prompt: settings.promptJson,
-    layout: settings.displayLayout
+    prompt: getPresetPrompt(settings),
+    layout: getPresetLayout(settings)
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -586,10 +598,13 @@ async function importPreset() {
     openNameEditor("Import Preset", imported.name, "Import", (name) => {
       const settings = mergeSettings(state.settings);
       const key = uniquePresetKey(slugifyPresetName(name), settings.schemaPresets);
-      settings.schemaPresets[key] = { name, value: imported.schema };
+      settings.schemaPresets[key] = {
+        name,
+        value: imported.schema,
+        promptJson: imported.prompt,
+        displayLayout: imported.layout
+      };
       settings.schemaPreset = key;
-      settings.promptJson = imported.prompt;
-      settings.displayLayout = imported.layout;
       state = { ...state, settings };
       render();
     });
@@ -723,16 +738,20 @@ function editActiveSchema() {
 }
 function editPrompt() {
   const settings = mergeSettings(state.settings);
-  openTextEditor("SceneMap Prompt", settings.promptJson, (text) => {
-    state = { ...state, settings: { ...settings, promptJson: text || DEFAULT_PROMPT_JSON } };
+  const key = settings.schemaPreset;
+  const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
+  openTextEditor("SceneMap Prompt", getPresetPrompt(settings, key), (text) => {
+    settings.schemaPresets[key] = { ...preset, promptJson: text || DEFAULT_PROMPT_JSON };
+    state = { ...state, settings };
     render();
   });
 }
 function editLayout() {
   const settings = mergeSettings(state.settings);
-  const preset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  const key = settings.schemaPreset;
+  const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
   const fieldOptions = extractSchemaFieldOptions(preset.value);
-  const workingLayout = cloneLayout(settings.displayLayout);
+  const workingLayout = cloneLayout(getPresetLayout(settings, key));
   const ctx = ctxRef;
   if (!ctx)
     return;
@@ -855,7 +874,8 @@ function editLayout() {
       }
       if (action === "save-layout") {
         validateLayout(workingLayout);
-        state = { ...state, settings: { ...settings, displayLayout: cloneLayout(workingLayout) } };
+        settings.schemaPresets[key] = { ...preset, displayLayout: cloneLayout(workingLayout) };
+        state = { ...state, settings };
         render();
         modal.dismiss();
         return;
