@@ -154,6 +154,8 @@ var defaultSettings = {
   maxResponseTokens: 16000,
   autoGenerateAiTrackers: false,
   autoGenerateInterval: 1,
+  showInputBarButton: true,
+  showMessageButtons: true,
   schemaPreset: "default",
   schemaPresets: {
     default: {

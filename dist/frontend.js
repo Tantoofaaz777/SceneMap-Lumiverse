@@ -150,6 +150,8 @@ var defaultSettings = {
   maxResponseTokens: 16000,
   autoGenerateAiTrackers: false,
   autoGenerateInterval: 1,
+  showInputBarButton: true,
+  showMessageButtons: true,
   schemaPreset: "default",
   schemaPresets: {
     default: {
@@ -290,9 +292,7 @@ function setup(ctx) {
     for (const off of offEvents)
       off();
     tab.destroy();
-    for (const button of messageActionButtons.values())
-      ctx.dom.uninject(button);
-    messageActionButtons.clear();
+    clearMessageActionButtons();
     removeStyle();
     ctx.dom.cleanup();
     ctxRef = null;
@@ -310,6 +310,10 @@ function scheduleMessageActionButtons() {
 }
 function renderMessageActionButtons() {
   const ctx = ctxRef;
+  if (!state.settings.showMessageButtons) {
+    clearMessageActionButtons();
+    return;
+  }
   if (!ctx?.dom.listMessageElements || !ctx.dom.inject)
     return;
   for (const { messageId, element } of ctx.dom.listMessageElements()) {
@@ -345,6 +349,12 @@ function renderMessageActionButtons() {
     messageActionButtons.set(messageId, injected);
   }
 }
+function clearMessageActionButtons() {
+  const ctx = ctxRef;
+  for (const button of messageActionButtons.values())
+    ctx?.dom.uninject(button);
+  messageActionButtons.clear();
+}
 function requestState(showRefresh = false) {
   if (showRefresh) {
     isRefreshingState = true;
@@ -362,6 +372,10 @@ function render() {
 function renderChatToolbar() {
   if (!toolbarRootRef)
     return;
+  if (!state.settings.showInputBarButton) {
+    toolbarRootRef.innerHTML = "";
+    return;
+  }
   const label = state.generatingMessageId ? "Cancel SceneMap generation" : state.latest ? "Regenerate SceneMap" : "Generate SceneMap";
   const isBehind = !state.latest || state.messagesBehind > 0;
   toolbarRootRef.innerHTML = `
@@ -429,6 +443,18 @@ function renderSettings() {
         <label class="scenemap-interval-field">
           <span>Interval</span>
           <input type="number" min="1" step="1" data-setting="autoGenerateInterval" value="${settings.autoGenerateInterval > 1 ? settings.autoGenerateInterval : ""}" placeholder="Empty = 1 = every assistant message">
+        </label>
+      </div>
+      <div class="scenemap-auto-row">
+        <label class="scenemap-switch-row">
+          <span>Show input bar button</span>
+          <input type="checkbox" data-setting="showInputBarButton" ${settings.showInputBarButton ? "checked" : ""}>
+          <span class="scenemap-switch" aria-hidden="true"></span>
+        </label>
+        <label class="scenemap-switch-row">
+          <span>Show message buttons</span>
+          <input type="checkbox" data-setting="showMessageButtons" ${settings.showMessageButtons ? "checked" : ""}>
+          <span class="scenemap-switch" aria-hidden="true"></span>
         </label>
       </div>
       <label>
@@ -550,6 +576,8 @@ function updateSettingFromControl(target, key) {
   const settings = mergeSettings(state.settings);
   if (key === "autoGenerateAiTrackers") {
     settings.autoGenerateAiTrackers = target.checked;
+  } else if (key === "showInputBarButton" || key === "showMessageButtons") {
+    settings[key] = target.checked;
   } else if (key === "autoGenerateInterval") {
     settings.autoGenerateInterval = Math.max(1, Math.floor(Number(target.value) || 1));
   } else if (key === "maxResponseTokens" || key === "includeLastXMessages") {
@@ -559,6 +587,8 @@ function updateSettingFromControl(target, key) {
   }
   state = { ...state, settings };
   if (key === "schemaPreset")
+    render();
+  if (key === "showInputBarButton" || key === "showMessageButtons")
     render();
 }
 function createPreset() {
