@@ -1095,11 +1095,12 @@ function validateLayout(layout) {
     section.fields = section.fields.filter((field) => field.path.trim());
     for (const field of section.fields) {
       field.path = field.path.trim();
-      field.label = field.label?.trim() || undefined;
+      if (Object.prototype.hasOwnProperty.call(field, "label"))
+        field.label = field.label?.trim() ?? "";
       field.fields = field.fields?.filter((child) => child.path.trim()).map((child) => ({
         ...child,
         path: child.path.trim(),
-        label: child.label?.trim() || undefined
+        label: Object.prototype.hasOwnProperty.call(child, "label") ? child.label?.trim() ?? "" : undefined
       }));
     }
   }
@@ -1204,30 +1205,40 @@ function renderField(field, tracker) {
   const value = getValueByPath(tracker, field.path);
   if (!hasRenderableValue(value))
     return "";
-  const label = escapeHtml(field.label || humanizeTrackerKey(field.path.split(".").pop() || field.path));
+  const label = getFieldLabel(field);
+  const labelMarkup = label ? `<span>${escapeHtml(label)}</span>` : "";
   const display = field.display || "text";
   if (display === "chips") {
-    return `<div class="scenemap-field"><span>${label}</span><div class="scenemap-chips">${toChips(value).map((item) => `<b>${escapeHtml(item)}</b>`).join("")}</div></div>`;
+    return `<div class="scenemap-field">${labelMarkup}<div class="scenemap-chips">${toChips(value).map((item) => `<b>${escapeHtml(item)}</b>`).join("")}</div></div>`;
   }
   if (display === "progress")
-    return renderProgressField(label, value);
+    return renderProgressField(label, field.path, value);
   if (display === "character_cards" && Array.isArray(value)) {
     return `<div class="scenemap-character-grid">${value.map((item, index) => renderCharacterCard(item, index, field.fields ?? [])).join("")}</div>`;
   }
-  return `<div class="scenemap-field"><span>${label}</span><p class="${display === "subtle" ? "subtle" : ""} ${display === "mono" ? "mono" : ""}">${escapeHtml(formatDisplayValue(value))}</p></div>`;
+  return `<div class="scenemap-field">${labelMarkup}<p class="${display === "subtle" ? "subtle" : ""} ${display === "mono" ? "mono" : ""}">${escapeHtml(formatDisplayValue(value))}</p></div>`;
 }
-function renderProgressField(label, value) {
+function getFieldLabel(field) {
+  if (Object.prototype.hasOwnProperty.call(field, "label")) {
+    const label = field.label?.trim() ?? "";
+    return label ? label : null;
+  }
+  return humanizeTrackerKey(field.path.split(".").pop() || field.path);
+}
+function renderProgressField(label, path, value) {
   const progress = parseProgressValue(value);
+  const labelMarkup = label ? `<span>${escapeHtml(label)}</span>` : "";
   if (!progress)
-    return `<div class="scenemap-field"><span>${label}</span><p>${escapeHtml(formatDisplayValue(value))}</p></div>`;
+    return `<div class="scenemap-field">${labelMarkup}<p>${escapeHtml(formatDisplayValue(value))}</p></div>`;
   const tone = progress.value < 34 ? "danger" : progress.value < 67 ? "warning" : "success";
+  const ariaLabel = label || humanizeTrackerKey(path.split(".").pop() || path);
   return `
     <div class="scenemap-field scenemap-progress-field" data-progress-tone="${tone}">
       <div class="scenemap-progress-head">
-        <span>${label}</span>
+        ${labelMarkup}
         <strong>${progress.label}</strong>
       </div>
-      <div class="scenemap-progress-track" role="meter" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.value}">
+      <div class="scenemap-progress-track" role="meter" aria-label="${escapeAttr(ariaLabel)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.value}">
         <i style="width: ${progress.value}%"></i>
       </div>
     </div>
@@ -1334,10 +1345,10 @@ var styles = `
 .scenemap-card { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
 .scenemap-board { flex: 1 1 auto; min-height: 0; overflow: auto; background: transparent; border-color: transparent; padding: 0 10px 0 0; }
 .scenemap-empty { color: var(--lumiverse-text-muted); font-size: 13px; text-align: center; padding: 20px 4px; }
-.scenemap-section { padding: 10px 0 12px; border-bottom: 1px solid var(--lumiverse-border); }
+.scenemap-section { padding: 10px 0 12px; }
 .scenemap-section--untitled { padding-top: 4px; }
-.scenemap-section:last-child { border-bottom: 0; }
-.scenemap-section h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 12px; text-align: center; text-transform: uppercase; font-weight: 800; }
+.scenemap-section h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 12px; text-align: center; text-transform: uppercase; font-weight: 800; }
+.scenemap-section h3::before, .scenemap-section h3::after { content: ""; height: 4px; flex: 1 1 auto; border-top: 1px solid var(--lumiverse-border); border-bottom: 1px solid var(--lumiverse-border); }
 .scenemap-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .scenemap-field span { color: var(--lumiverse-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .scenemap-field p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; }
@@ -1352,7 +1363,7 @@ var styles = `
 .scenemap-progress-field[data-progress-tone="warning"] .scenemap-progress-track i { background: var(--lumiverse-warning, var(--lumiverse-primary, var(--lumiverse-accent))); box-shadow: 0 0 10px color-mix(in srgb, var(--lumiverse-warning, var(--lumiverse-primary, var(--lumiverse-accent))) 35%, transparent); }
 .scenemap-progress-field[data-progress-tone="danger"] .scenemap-progress-track i { background: var(--lumiverse-danger, var(--lumiverse-primary, var(--lumiverse-accent))); box-shadow: 0 0 10px color-mix(in srgb, var(--lumiverse-danger, var(--lumiverse-primary, var(--lumiverse-accent))) 35%, transparent); }
 .scenemap-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.scenemap-chips b { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 650; }
+.scenemap-chips b { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 650; }
 .scenemap-character-grid { display: flex; flex-direction: column; gap: 14px; }
 .scenemap-character { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: 8px; padding: 10px; }
 .scenemap-character h4 { margin: 0 0 10px; color: var(--lumiverse-text); font-size: 14px; font-weight: 750; }
