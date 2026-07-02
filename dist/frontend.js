@@ -221,6 +221,7 @@ var toolbarRootRef = null;
 var tabHandle = null;
 var isRefreshingState = false;
 var editorRequestSeq = 0;
+var pendingMessageGenerationId = null;
 var pendingTextEditors = new Map;
 var messageActionButtons = new Map;
 var iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
@@ -247,12 +248,15 @@ function setup(ctx) {
   const offBackend = ctx.onBackendMessage((payload) => {
     if (payload?.type === "state") {
       isRefreshingState = false;
+      pendingMessageGenerationId = null;
       state = payload.state;
       render();
       return;
     }
     if (payload?.type === "error") {
+      pendingMessageGenerationId = null;
       showInlineError(payload.message);
+      updateAllMessageActionButtons();
     }
     if (payload?.type === "text_editor_result") {
       handleTextEditorResult(payload);
@@ -349,6 +353,12 @@ function renderMessageActionButtons() {
     injected.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (pendingMessageGenerationId)
+        return;
+      if (state.generatingMessageId && state.generatingMessageId !== messageId)
+        return;
+      pendingMessageGenerationId = messageId;
+      updateAllMessageActionButtons();
       send({ type: "generate_tracker", messageId });
     });
     messageActionButtons.set(messageId, injected);
@@ -358,18 +368,25 @@ function updateMessageActionButton(root, messageId) {
   const button = root.matches(".scenemap-message-action") ? root : root.querySelector(".scenemap-message-action");
   if (!button)
     return;
-  const isGenerating = state.generatingMessageId === messageId;
+  const isGenerating = state.generatingMessageId === messageId || pendingMessageGenerationId === messageId;
+  const isUnavailable = Boolean(state.generatingMessageId && state.generatingMessageId !== messageId || pendingMessageGenerationId && pendingMessageGenerationId !== messageId);
   const label = isGenerating ? "Cancel SceneMap generation" : "Generate SceneMap for this message";
   button.classList.toggle("is-generating", isGenerating);
+  button.toggleAttribute("disabled", isUnavailable);
   button.title = label;
   button.setAttribute("aria-label", label);
   button.innerHTML = isGenerating ? refreshSvg() : iconSvg;
+}
+function updateAllMessageActionButtons() {
+  for (const [messageId, button] of messageActionButtons)
+    updateMessageActionButton(button, messageId);
 }
 function clearMessageActionButtons() {
   const ctx = ctxRef;
   for (const button of messageActionButtons.values())
     ctx?.dom.uninject(button);
   messageActionButtons.clear();
+  pendingMessageGenerationId = null;
 }
 function requestState(showRefresh = false) {
   if (showRefresh) {
@@ -1466,6 +1483,7 @@ var styles = `
 .scenemap-message-action svg { width: 13px; height: 13px; }
 .scenemap-message-action.is-generating { color: var(--lumiverse-success, var(--lumiverse-accent)); animation: scenemap-status-pulse 1.8s ease-in-out infinite; }
 .scenemap-message-action.is-generating svg { animation: scenemap-spin .9s linear infinite; }
+.scenemap-message-action:disabled { opacity: .45; pointer-events: none; }
 .scenemap-message-action:hover { color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); background: color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 12%, transparent); }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scenemap-modal-spacer { flex: 1 1 auto; }

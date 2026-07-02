@@ -35,6 +35,7 @@ let toolbarRootRef: HTMLElement | null = null;
 let tabHandle: ReturnType<SpindleFrontendContext["ui"]["registerDrawerTab"]> | null = null;
 let isRefreshingState = false;
 let editorRequestSeq = 0;
+let pendingMessageGenerationId: string | null = null;
 
 type PendingTextEditor = {
   title: string;
@@ -71,12 +72,15 @@ export function setup(ctx: SpindleFrontendContext) {
   const offBackend = ctx.onBackendMessage((payload: any) => {
     if (payload?.type === "state") {
       isRefreshingState = false;
+      pendingMessageGenerationId = null;
       state = payload.state;
       render();
       return;
     }
     if (payload?.type === "error") {
+      pendingMessageGenerationId = null;
       showInlineError(payload.message);
+      updateAllMessageActionButtons();
     }
     if (payload?.type === "text_editor_result") {
       handleTextEditorResult(payload);
@@ -179,6 +183,10 @@ function renderMessageActionButtons() {
     injected.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (pendingMessageGenerationId) return;
+      if (state.generatingMessageId && state.generatingMessageId !== messageId) return;
+      pendingMessageGenerationId = messageId;
+      updateAllMessageActionButtons();
       send({ type: "generate_tracker", messageId });
     });
     messageActionButtons.set(messageId, injected);
@@ -190,18 +198,28 @@ function updateMessageActionButton(root: Element, messageId: string) {
     ? root as HTMLElement
     : root.querySelector<HTMLElement>(".scenemap-message-action");
   if (!button) return;
-  const isGenerating = state.generatingMessageId === messageId;
+  const isGenerating = state.generatingMessageId === messageId || pendingMessageGenerationId === messageId;
+  const isUnavailable = Boolean(
+    (state.generatingMessageId && state.generatingMessageId !== messageId)
+      || (pendingMessageGenerationId && pendingMessageGenerationId !== messageId),
+  );
   const label = isGenerating ? "Cancel SceneMap generation" : "Generate SceneMap for this message";
   button.classList.toggle("is-generating", isGenerating);
+  button.toggleAttribute("disabled", isUnavailable);
   button.title = label;
   button.setAttribute("aria-label", label);
   button.innerHTML = isGenerating ? refreshSvg() : iconSvg;
+}
+
+function updateAllMessageActionButtons() {
+  for (const [messageId, button] of messageActionButtons) updateMessageActionButton(button, messageId);
 }
 
 function clearMessageActionButtons() {
   const ctx = ctxRef;
   for (const button of messageActionButtons.values()) ctx?.dom.uninject(button);
   messageActionButtons.clear();
+  pendingMessageGenerationId = null;
 }
 
 function requestState(showRefresh = false) {
@@ -1323,6 +1341,7 @@ const styles = `
 .scenemap-message-action svg { width: 13px; height: 13px; }
 .scenemap-message-action.is-generating { color: var(--lumiverse-success, var(--lumiverse-accent)); animation: scenemap-status-pulse 1.8s ease-in-out infinite; }
 .scenemap-message-action.is-generating svg { animation: scenemap-spin .9s linear infinite; }
+.scenemap-message-action:disabled { opacity: .45; pointer-events: none; }
 .scenemap-message-action:hover { color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); background: color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 12%, transparent); }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scenemap-modal-spacer { flex: 1 1 auto; }

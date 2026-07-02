@@ -524,6 +524,10 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
     spindle.toast.info("SceneMap generation cancelled.", { userId });
     return;
   }
+  const activeMessageId = getActiveGenerationMessageId(userId);
+  if (activeMessageId && activeMessageId !== target.id) {
+    throw new Error("SceneMap is already mapping another message.");
+  }
 
   const settings = await loadSettings(userId);
   const presetKey = getChatPresetKey(chat, settings);
