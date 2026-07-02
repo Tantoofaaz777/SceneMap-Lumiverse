@@ -220,6 +220,7 @@ var tabHandle = null;
 var isRefreshingState = false;
 var editorRequestSeq = 0;
 var pendingTextEditors = new Map;
+var messageActionButtons = new Map;
 var iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
 function setup(ctx) {
   ctxRef = ctx;
@@ -289,6 +290,9 @@ function setup(ctx) {
     for (const off of offEvents)
       off();
     tab.destroy();
+    for (const button of messageActionButtons.values())
+      ctx.dom.uninject(button);
+    messageActionButtons.clear();
     removeStyle();
     ctx.dom.cleanup();
     ctxRef = null;
@@ -301,6 +305,36 @@ function setup(ctx) {
 function send(payload) {
   ctxRef?.sendToBackend(payload);
 }
+function scheduleMessageActionButtons() {
+  window.requestAnimationFrame(() => renderMessageActionButtons());
+}
+function renderMessageActionButtons() {
+  const ctx = ctxRef;
+  if (!ctx?.dom.listMessageElements || !ctx.dom.inject)
+    return;
+  for (const { messageId, element } of ctx.dom.listMessageElements()) {
+    if (messageActionButtons.has(messageId))
+      continue;
+    if (!element.matches('[data-part="character"], [data-part="streaming"]'))
+      continue;
+    const injected = ctx.dom.inject(element, `
+      <button
+        type="button"
+        class="scenemap-message-action"
+        title="Generate SceneMap for this message"
+        aria-label="Generate SceneMap for this message"
+        data-scenemap-message-action="${escapeAttr(messageId)}"
+      >
+        ${iconSvg}
+      </button>
+    `, "beforeend");
+    injected.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    messageActionButtons.set(messageId, injected);
+  }
+}
 function requestState(showRefresh = false) {
   if (showRefresh) {
     isRefreshingState = true;
@@ -312,6 +346,7 @@ function render() {
   renderDrawer();
   renderSettings();
   renderChatToolbar();
+  scheduleMessageActionButtons();
   tabHandle?.setBadge(state.messagesBehind > 0 ? String(state.messagesBehind) : null);
 }
 function renderChatToolbar() {
@@ -1371,6 +1406,12 @@ var styles = `
 .scenemap-chat-toolbar-btn.is-generating svg { animation: scenemap-spin .9s linear infinite; }
 .scenemap-chat-toolbar-btn:disabled { opacity: .45; cursor: default; }
 .scenemap-chat-toolbar-btn svg { width: 14px; height: 14px; }
+.scenemap-message-action { position: absolute; top: 20px; right: 184px; z-index: 5; width: 27px; height: 27px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--lumiverse-border); border-radius: 8px; background: color-mix(in srgb, var(--lumiverse-fill) 86%, transparent); color: var(--lumiverse-text-muted); padding: 0; cursor: default; opacity: 0; transition: opacity .16s ease, color .16s ease, border-color .16s ease, background .16s ease; }
+.scenemap-message-action svg { width: 13px; height: 13px; }
+[data-component="BubbleMessage"]:hover .scenemap-message-action { opacity: 1; }
+.scenemap-message-action:hover { color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); background: color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 12%, transparent); }
+@media (hover: none) { .scenemap-message-action { opacity: .5; } }
+@media (max-width: 768px) { .scenemap-message-action { top: 20px; right: 174px; } }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scenemap-modal-spacer { flex: 1 1 auto; }
 .scenemap-card { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
