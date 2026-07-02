@@ -1347,7 +1347,7 @@ var styles = `
 .scenemap-empty { color: var(--lumiverse-text-muted); font-size: 13px; text-align: center; padding: 20px 4px; }
 .scenemap-section { padding: 10px 0 12px; }
 .scenemap-section--untitled { padding-top: 4px; }
-.scenemap-section h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 12px; text-align: center; text-transform: uppercase; font-weight: 800; }
+.scenemap-section h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 12px; text-align: center; text-transform: uppercase; font-weight: 800; white-space: pre-wrap; }
 .scenemap-section h3::before, .scenemap-section h3::after { content: ""; height: 4px; flex: 1 1 auto; border-top: 1px solid var(--lumiverse-border); border-bottom: 1px solid var(--lumiverse-border); }
 .scenemap-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .scenemap-field span { color: var(--lumiverse-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
