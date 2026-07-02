@@ -160,7 +160,7 @@ function renderMessageActionButtons() {
       >
         ${iconSvg}
       </button>
-    `, "afterend");
+    `, "beforeend");
     injected.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -1265,8 +1265,7 @@ const styles = `
 .scenemap-chat-toolbar-btn.is-generating svg { animation: scenemap-spin .9s linear infinite; }
 .scenemap-chat-toolbar-btn:disabled { opacity: .45; cursor: default; }
 .scenemap-chat-toolbar-btn svg { width: 14px; height: 14px; }
-.scenemap-message-action { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; align-self: flex-start; margin-top: 5px; margin-left: 6px; border: 1px solid var(--lumiverse-border); border-radius: 999px; background: color-mix(in srgb, var(--lumiverse-fill-deepest, var(--lumiverse-fill)) 86%, transparent); color: var(--lumiverse-text-muted); padding: 0; cursor: default; opacity: 0; transition: opacity .16s ease, color .16s ease, border-color .16s ease, background .16s ease; }
-[data-component="BubbleMessage"] [class*="metaWrap"]:has(.scenemap-message-action) { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
+.scenemap-message-action { position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--lumiverse-border); border-radius: 999px; background: color-mix(in srgb, var(--lumiverse-fill-deepest, var(--lumiverse-fill)) 86%, transparent); color: var(--lumiverse-text-muted); padding: 0; cursor: default; opacity: 0; transition: opacity .16s ease, color .16s ease, border-color .16s ease, background .16s ease; }
 .scenemap-message-action svg { width: 13px; height: 13px; }
 [data-component="BubbleMessage"]:hover .scenemap-message-action { opacity: 1; }
 .scenemap-message-action:hover { color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); background: color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 12%, transparent); }
