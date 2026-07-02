@@ -34,6 +34,15 @@ let settingsRootRef: HTMLElement | null = null;
 let toolbarRootRef: HTMLElement | null = null;
 let tabHandle: ReturnType<SpindleFrontendContext["ui"]["registerDrawerTab"]> | null = null;
 let isRefreshingState = false;
+let editorRequestSeq = 0;
+
+type PendingTextEditor = {
+  title: string;
+  onSave: (value: string) => void;
+  errorTarget: "drawer" | "settings";
+};
+
+const pendingTextEditors = new Map<string, PendingTextEditor>();
 
 const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
 
@@ -67,6 +76,9 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     if (payload?.type === "error") {
       showInlineError(payload.message);
+    }
+    if (payload?.type === "text_editor_result") {
+      handleTextEditorResult(payload);
     }
   });
   const offEvents = [
@@ -992,42 +1004,39 @@ function openJsonEditor(title: string, value: unknown, onSave: (data: unknown) =
     const data = JSON.parse(text);
     if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("JSON must be an object.");
     onSave(data);
-  }, "Save");
+  });
 }
 
-function openTextEditor(title: string, value: string, onSave: (value: string) => void, submitLabel = "Save") {
-  const ctx = ctxRef;
-  if (!ctx) return;
-  const modal = ctx.ui.showModal({ title, width: 720, maxHeight: 720 });
-  modal.root.innerHTML = `
-    <div class="scenemap-editor">
-      <textarea spellcheck="false"></textarea>
-      <div class="scenemap-modal-actions">
-        <button class="scenemap-pill-action" data-modal-action="cancel">Cancel</button>
-        <button class="scenemap-pill-action scenemap-primary" data-modal-action="save">${escapeHtml(submitLabel)}</button>
-      </div>
-      <div class="scenemap-inline-error" hidden></div>
-    </div>
-  `;
-  const textarea = modal.root.querySelector("textarea") as HTMLTextAreaElement;
-  const error = modal.root.querySelector(".scenemap-inline-error") as HTMLElement;
-  textarea.value = value;
-  textarea.focus();
-  modal.root.addEventListener("click", (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLElement>("[data-modal-action]");
-    if (!button) return;
-    if (button.dataset.modalAction === "cancel") {
-      modal.dismiss();
-      return;
-    }
-    try {
-      onSave(textarea.value);
-      modal.dismiss();
-    } catch (err) {
-      error.hidden = false;
-      error.textContent = (err as Error).message;
-    }
+function openTextEditor(title: string, value: string, onSave: (value: string) => void) {
+  const requestId = `editor-${Date.now()}-${++editorRequestSeq}`;
+  pendingTextEditors.set(requestId, {
+    title,
+    onSave,
+    errorTarget: title.includes("Tracker") ? "drawer" : "settings",
   });
+  send({
+    type: "open_text_editor",
+    requestId,
+    title,
+    value,
+    placeholder: title.includes("Prompt") ? "Write the SceneMap generation prompt. Macros like {{schema}} are supported." : "",
+  });
+}
+
+function handleTextEditorResult(payload: any) {
+  const requestId = typeof payload.requestId === "string" ? payload.requestId : "";
+  const pending = pendingTextEditors.get(requestId);
+  if (!pending) return;
+  pendingTextEditors.delete(requestId);
+  if (payload.cancelled) return;
+  const text = typeof payload.text === "string" ? payload.text : "";
+  try {
+    pending.onSave(text);
+  } catch (err) {
+    if (pending.errorTarget === "settings") showSettingsError((err as Error).message);
+    else showInlineError((err as Error).message);
+    openTextEditor(pending.title, text, pending.onSave);
+  }
 }
 
 function showInlineError(message: string) {

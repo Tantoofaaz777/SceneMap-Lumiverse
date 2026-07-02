@@ -683,6 +683,21 @@ spindle.onFrontendMessage(async (payload: any, userId?: string) => {
       case "delete_tracker":
         await deleteTracker(payload.messageId, userId);
         break;
+      case "open_text_editor": {
+        const result = await (spindle.textEditor as any).open({
+          title: typeof payload.title === "string" ? payload.title : "Edit Text",
+          value: typeof payload.value === "string" ? payload.value : "",
+          placeholder: typeof payload.placeholder === "string" ? payload.placeholder : "",
+          userId,
+        });
+        spindle.sendToFrontend({
+          type: "text_editor_result",
+          requestId: payload.requestId,
+          text: result?.text ?? "",
+          cancelled: result?.cancelled === true,
+        }, userId);
+        break;
+      }
     }
   } catch (error) {
     spindle.sendToFrontend({ type: "error", message: (error as Error).message }, userId);
