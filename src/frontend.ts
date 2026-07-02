@@ -164,6 +164,9 @@ function renderMessageActionButtons() {
     const button = injected.querySelector(".scenemap-message-action");
     if (button) {
       button.classList.add(...Array.from(metaPill.classList));
+      button.addEventListener("mouseover", (event) => event.stopPropagation(), true);
+      button.addEventListener("mouseenter", (event) => event.stopPropagation(), true);
+      button.addEventListener("pointerenter", (event) => event.stopPropagation(), true);
     }
     injected.addEventListener("click", (event) => {
       event.preventDefault();
@@ -1269,11 +1272,9 @@ const styles = `
 .scenemap-chat-toolbar-btn.is-generating svg { animation: scenemap-spin .9s linear infinite; }
 .scenemap-chat-toolbar-btn:disabled { opacity: .45; cursor: default; }
 .scenemap-chat-toolbar-btn svg { width: 14px; height: 14px; }
-.scenemap-message-action { position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; margin: 0; padding: 0; box-sizing: border-box; cursor: default; opacity: 0; transition: opacity .16s ease, color .16s ease, border-color .16s ease, background .16s ease; }
+.scenemap-message-action { position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; margin: 0; padding: 0; box-sizing: border-box; cursor: default; opacity: 1; transition: color .16s ease, border-color .16s ease, background .16s ease; }
 .scenemap-message-action svg { width: 13px; height: 13px; }
-[data-component="BubbleMessage"]:hover .scenemap-message-action { opacity: 1; }
 .scenemap-message-action:hover { color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); background: color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 12%, transparent); }
-@media (hover: none) { .scenemap-message-action { opacity: .5; } }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scenemap-modal-spacer { flex: 1 1 auto; }
 .scenemap-card { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
