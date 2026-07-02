@@ -146,15 +146,20 @@ function renderMessageActionButtons() {
   }) | null;
   if (!ctx?.dom.listMessageElements || !ctx.dom.inject) return;
   for (const { messageId, element } of ctx.dom.listMessageElements()) {
-    if (messageActionButtons.has(messageId)) continue;
     if (!element.matches('[data-part="character"], [data-part="streaming"]')) continue;
     const metaPill = element.querySelector('[class*="metaPill"]');
     if (!metaPill) continue;
-    const injected = ctx.dom.inject(metaPill, `
+    const existing = messageActionButtons.get(messageId);
+    if (existing) {
+      positionMessageActionButton(existing, metaPill);
+      continue;
+    }
+    const metaWrap = metaPill.parentElement;
+    if (!metaWrap) continue;
+    const injected = ctx.dom.inject(metaWrap, `
       <button
         type="button"
         class="scenemap-message-action"
-        title="Generate SceneMap for this message"
         aria-label="Generate SceneMap for this message"
         data-scenemap-message-action="${escapeAttr(messageId)}"
       >
@@ -164,16 +169,21 @@ function renderMessageActionButtons() {
     const button = injected.querySelector(".scenemap-message-action");
     if (button) {
       button.classList.add(...Array.from(metaPill.classList));
-      button.addEventListener("mouseover", (event) => event.stopPropagation(), true);
-      button.addEventListener("mouseenter", (event) => event.stopPropagation(), true);
-      button.addEventListener("pointerenter", (event) => event.stopPropagation(), true);
     }
+    positionMessageActionButton(injected, metaPill);
     injected.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
     });
     messageActionButtons.set(messageId, injected);
   }
+}
+
+function positionMessageActionButton(button: Element, metaPill: Element) {
+  const target = button instanceof HTMLElement ? button : button.querySelector<HTMLElement>(".scenemap-message-action");
+  if (!target || !(metaPill instanceof HTMLElement)) return;
+  target.style.left = `${metaPill.offsetLeft + metaPill.offsetWidth + 6}px`;
+  target.style.top = `${metaPill.offsetTop + (metaPill.offsetHeight / 2)}px`;
 }
 
 function requestState(showRefresh = false) {
@@ -1272,9 +1282,9 @@ const styles = `
 .scenemap-chat-toolbar-btn.is-generating svg { animation: scenemap-spin .9s linear infinite; }
 .scenemap-chat-toolbar-btn:disabled { opacity: .45; cursor: default; }
 .scenemap-chat-toolbar-btn svg { width: 14px; height: 14px; }
-.scenemap-message-action { position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; margin: 0; padding: 0; box-sizing: border-box; cursor: default; opacity: 1; transition: color .16s ease, border-color .16s ease, background .16s ease; }
+[data-component="BubbleMessage"] [class*="metaWrap"]:has(.scenemap-message-action) { position: relative; }
+.scenemap-message-action { position: absolute; transform: translateY(-50%); width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; margin: 0; padding: 0; box-sizing: border-box; cursor: default; opacity: 1; }
 .scenemap-message-action svg { width: 13px; height: 13px; }
-.scenemap-message-action:hover { color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); background: color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 12%, transparent); }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scenemap-modal-spacer { flex: 1 1 auto; }
 .scenemap-card { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
