@@ -149,7 +149,11 @@ function renderMessageActionButtons() {
   }
   if (!ctx?.dom.listMessageElements || !ctx.dom.inject) return;
   for (const { messageId, element } of ctx.dom.listMessageElements()) {
-    if (messageActionButtons.has(messageId)) continue;
+    const existing = messageActionButtons.get(messageId);
+    if (existing) {
+      updateMessageActionButton(existing, messageId);
+      continue;
+    }
     if (!element.matches('[data-part="character"], [data-part="streaming"]')) continue;
     const metaPill = element.querySelector('[class*="metaPill"]');
     if (!metaPill) continue;
@@ -171,12 +175,27 @@ function renderMessageActionButtons() {
       button.addEventListener("mouseenter", (event) => event.stopPropagation(), true);
       button.addEventListener("pointerenter", (event) => event.stopPropagation(), true);
     }
+    updateMessageActionButton(injected, messageId);
     injected.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      send({ type: "generate_tracker", messageId });
     });
     messageActionButtons.set(messageId, injected);
   }
+}
+
+function updateMessageActionButton(root: Element, messageId: string) {
+  const button = root.matches(".scenemap-message-action")
+    ? root as HTMLElement
+    : root.querySelector<HTMLElement>(".scenemap-message-action");
+  if (!button) return;
+  const isGenerating = state.generatingMessageId === messageId;
+  const label = isGenerating ? "Cancel SceneMap generation" : "Generate SceneMap for this message";
+  button.classList.toggle("is-generating", isGenerating);
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.innerHTML = isGenerating ? refreshSvg() : iconSvg;
 }
 
 function clearMessageActionButtons() {
@@ -1302,6 +1321,8 @@ const styles = `
 .scenemap-chat-toolbar-btn svg { width: 14px; height: 14px; }
 .scenemap-message-action { position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; margin: 0; padding: 0; box-sizing: border-box; cursor: default; opacity: 1; transition: color .16s ease, border-color .16s ease, background .16s ease; }
 .scenemap-message-action svg { width: 13px; height: 13px; }
+.scenemap-message-action.is-generating { color: var(--lumiverse-success, var(--lumiverse-accent)); animation: scenemap-status-pulse 1.8s ease-in-out infinite; }
+.scenemap-message-action.is-generating svg { animation: scenemap-spin .9s linear infinite; }
 .scenemap-message-action:hover { color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); background: color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 12%, transparent); }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scenemap-modal-spacer { flex: 1 1 auto; }
