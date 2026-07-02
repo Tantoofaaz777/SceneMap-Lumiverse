@@ -462,6 +462,7 @@ function normalizeImportedField(value: unknown): TrackerBoardField {
     path: typeof record.path === "string" ? record.path : "",
     label: typeof record.label === "string" ? record.label : undefined,
     display,
+    center: record.center === true,
     fields: Array.isArray(record.fields) ? record.fields.map(normalizeImportedField) : undefined,
   };
 }
@@ -618,6 +619,9 @@ function editLayout() {
       field.display = target.value as TrackerFieldDisplay;
       draw();
     }
+    if (target.dataset.layoutInput === "field-center") {
+      field.center = (target as unknown as HTMLInputElement).checked;
+    }
     if (target.dataset.layoutInput === "child-path" && childIndex !== null) {
       const parentOption = findFieldOption(fieldOptions, field.path);
       const option = parentOption?.children?.find((child) => child.path === target.value);
@@ -631,6 +635,9 @@ function editLayout() {
     if (target.dataset.layoutInput === "child-display" && childIndex !== null && field.fields?.[childIndex]) {
       field.fields[childIndex].display = target.value as TrackerFieldDisplay;
       draw();
+    }
+    if (target.dataset.layoutInput === "child-center" && childIndex !== null && field.fields?.[childIndex]) {
+      field.fields[childIndex].center = (target as unknown as HTMLInputElement).checked;
     }
   });
   modal.root.addEventListener("click", (event) => {
@@ -769,6 +776,7 @@ function renderLayoutField(field: TrackerBoardField, sectionIndex: number, field
         ${iconButton("move-field-down", "Move down", "down", { section: sectionIndex, field: fieldIndex, disabled: fieldIndex >= layout.sections[sectionIndex].fields.length - 1 })}
         ${iconButton("remove-field", "Remove field", "trash", { section: sectionIndex, field: fieldIndex })}
       </div>
+      ${renderChipCenterToggle("field-center", field.center === true, { section: sectionIndex, field: fieldIndex }, field.display === "chips")}
       ${childEditor}
     </article>
   `;
@@ -803,6 +811,24 @@ function renderChildField(parent: TrackerBoardField, child: TrackerBoardField, c
       ${iconButton("move-child-down", "Move down", "down", { section: sectionIndex, field: fieldIndex, child: childIndex, disabled: childIndex >= childCount - 1 })}
       ${iconButton("remove-child", "Remove card field", "trash", { section: sectionIndex, field: fieldIndex, child: childIndex })}
     </div>
+    ${renderChipCenterToggle("child-center", child.center === true, { section: sectionIndex, field: fieldIndex, child: childIndex }, child.display === "chips")}
+  `;
+}
+
+function renderChipCenterToggle(input: string, checked: boolean, indexes: { section: number; field: number; child?: number }, visible: boolean): string {
+  if (!visible) return "";
+  return `
+    <label class="scenemap-layout-check-row">
+      <input
+        type="checkbox"
+        data-layout-input="${input}"
+        data-section="${indexes.section}"
+        data-field="${indexes.field}"
+        ${indexes.child !== undefined ? `data-child="${indexes.child}"` : ""}
+        ${checked ? "checked" : ""}
+      >
+      <span>Center chips</span>
+    </label>
   `;
 }
 
@@ -934,7 +960,9 @@ function validateLayout(layout: TrackerBoardDisplayLayout) {
         ...child,
         path: child.path.trim(),
         label: Object.prototype.hasOwnProperty.call(child, "label") ? child.label?.trim() ?? "" : undefined,
+        center: child.display === "chips" ? child.center === true : undefined,
       }));
+      field.center = field.display === "chips" ? field.center === true : undefined;
     }
   }
 }
@@ -1045,7 +1073,7 @@ function renderField(field: TrackerBoardField, tracker: unknown): string {
   const labelMarkup = label ? `<span>${escapeHtml(label)}</span>` : "";
   const display = field.display || "text";
   if (display === "chips") {
-    return `<div class="scenemap-field">${labelMarkup}<div class="scenemap-chips">${toChips(value).map((item) => `<b>${escapeHtml(item)}</b>`).join("")}</div></div>`;
+    return `<div class="scenemap-field">${labelMarkup}<div class="scenemap-chips ${field.center ? "is-centered" : ""}">${toChips(value).map((item) => `<b>${escapeHtml(item)}</b>`).join("")}</div></div>`;
   }
   if (display === "progress") return renderProgressField(label, field.path, value);
   if (display === "character_cards" && Array.isArray(value)) {
@@ -1211,6 +1239,7 @@ const styles = `
 .scenemap-progress-field[data-progress-tone="warning"] .scenemap-progress-track i { background: var(--lumiverse-warning, var(--lumiverse-primary, var(--lumiverse-accent))); box-shadow: 0 0 10px color-mix(in srgb, var(--lumiverse-warning, var(--lumiverse-primary, var(--lumiverse-accent))) 35%, transparent); }
 .scenemap-progress-field[data-progress-tone="danger"] .scenemap-progress-track i { background: var(--lumiverse-danger, var(--lumiverse-primary, var(--lumiverse-accent))); box-shadow: 0 0 10px color-mix(in srgb, var(--lumiverse-danger, var(--lumiverse-primary, var(--lumiverse-accent))) 35%, transparent); }
 .scenemap-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.scenemap-chips.is-centered { justify-content: center; }
 .scenemap-chips b { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 650; }
 .scenemap-character-grid { display: flex; flex-direction: column; gap: 14px; }
 .scenemap-character { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: 8px; padding: 10px; }
@@ -1247,6 +1276,8 @@ const styles = `
 .scenemap-layout-section { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .scenemap-layout-section-header { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 10px; align-items: end; }
 .scenemap-layout-section label, .scenemap-layout-field label { display: flex; flex-direction: column; gap: 5px; color: var(--lumiverse-text-muted); font-size: 12px; }
+.scenemap-layout-section label.scenemap-layout-check-row, .scenemap-layout-field label.scenemap-layout-check-row { display: inline-flex; flex-direction: row; align-items: center; gap: 7px; margin: 0; }
+.scenemap-layout-check-row input { width: auto !important; margin: 0; }
 .scenemap-layout-fields { display: flex; flex-direction: column; gap: 7px; }
 .scenemap-layout-field { display: flex; flex-direction: column; gap: 8px; }
 .scenemap-layout-field-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto auto auto; gap: 6px; align-items: center; }

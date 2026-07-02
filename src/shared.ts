@@ -9,6 +9,7 @@ export interface TrackerBoardField {
   path: string;
   label?: string;
   display?: TrackerFieldDisplay;
+  center?: boolean;
   fields?: TrackerBoardField[];
 }
 
