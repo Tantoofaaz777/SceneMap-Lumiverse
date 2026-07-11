@@ -1549,6 +1549,7 @@ const styles = `
   background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 7px 9px; font: inherit;
 }
 .scenemap-native-select { width: 100%; min-width: 0; }
+body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-index: 10004 !important; }
 .scenemap-editor { display: flex; flex-direction: column; gap: 10px; }
 .scenemap-name-editor { display: flex; flex-direction: column; gap: 12px; color: var(--lumiverse-text); }
 .scenemap-name-editor label { display: flex; flex-direction: column; gap: 5px; color: var(--lumiverse-text-muted); font-size: 12px; }
