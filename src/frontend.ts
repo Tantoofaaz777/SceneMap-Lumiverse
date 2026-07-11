@@ -8,6 +8,7 @@ import {
   getPresetLayout,
   getPresetPrompt,
   humanizeTrackerKey,
+  jsonValuesEqual,
   mergeSettings,
   type SceneMapSettings,
   type SceneMapState,
@@ -500,6 +501,7 @@ function renamePreset() {
   const key = settings.schemaPreset;
   const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
   openNameEditor("Rename Preset", preset.name, "Save", (name) => {
+    if (name === preset.name) return;
     settings.schemaPresets[key] = { ...preset, name };
     updateSettingsDraft(settings);
     render();
@@ -702,6 +704,7 @@ function editActiveSchema() {
   const settings = mergeSettings(state.settings);
   const preset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   openJsonEditor("SceneMap Schema", preset.value, (data) => {
+    if (jsonValuesEqual(data, preset.value)) return;
     settings.schemaPresets[settings.schemaPreset] = { ...preset, value: data as Record<string, unknown> };
     updateSettingsDraft(settings);
     render();
@@ -712,8 +715,11 @@ function editPrompt() {
   const settings = mergeSettings(state.settings);
   const key = settings.schemaPreset;
   const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
-  openTextEditor("SceneMap Prompt", getPresetPrompt(settings, key), (text) => {
-    settings.schemaPresets[key] = { ...preset, promptJson: text || DEFAULT_PROMPT_JSON };
+  const currentPrompt = getPresetPrompt(settings, key);
+  openTextEditor("SceneMap Prompt", currentPrompt, (text) => {
+    const nextPrompt = text || DEFAULT_PROMPT_JSON;
+    if (nextPrompt === currentPrompt) return;
+    settings.schemaPresets[key] = { ...preset, promptJson: nextPrompt };
     updateSettingsDraft(settings);
     render();
   });
@@ -724,7 +730,8 @@ function editLayout() {
   const key = settings.schemaPreset;
   const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
   const fieldOptions = extractSchemaFieldOptions(preset.value);
-  const workingLayout = cloneLayout(getPresetLayout(settings, key));
+  const originalLayout = cloneLayout(getPresetLayout(settings, key));
+  const workingLayout = cloneLayout(originalLayout);
   const ctx = ctxRef;
   if (!ctx) return;
 
@@ -823,6 +830,10 @@ function editLayout() {
       }
       if (action === "save-layout") {
         validateLayout(workingLayout);
+        if (jsonValuesEqual(workingLayout, originalLayout)) {
+          modal.dismiss();
+          return;
+        }
         settings.schemaPresets[key] = { ...preset, displayLayout: cloneLayout(workingLayout) };
         updateSettingsDraft(settings);
         render();

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SCHEMA_VALUE,
+  jsonValuesEqual,
   mergeSettings,
   resolveSamplingParameter,
   schemaToExample,
@@ -113,6 +114,22 @@ describe("resolveSamplingParameter", () => {
     expect(resolveSamplingParameter(0.25, 0, 2)).toBe(0.25);
     expect(resolveSamplingParameter(3, 0, 2)).toBe(2);
     expect(resolveSamplingParameter(-0.5, 0, 1)).toBe(0);
+  });
+});
+
+describe("jsonValuesEqual", () => {
+  test("treats equivalent JSON objects as unchanged regardless of key order", () => {
+    expect(jsonValuesEqual(
+      { type: "object", properties: { name: { type: "string" } } },
+      { properties: { name: { type: "string" } }, type: "object" },
+    )).toBe(true);
+  });
+
+  test("detects nested JSON changes", () => {
+    expect(jsonValuesEqual(
+      { sections: [{ fields: ["name", "outfit"] }] },
+      { sections: [{ fields: ["name", "hair"] }] },
+    )).toBe(false);
   });
 });
 

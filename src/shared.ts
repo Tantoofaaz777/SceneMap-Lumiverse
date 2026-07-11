@@ -276,6 +276,24 @@ export function resolveSamplingParameter(value: unknown, minimum: number, maximu
   return Math.min(maximum, Math.max(minimum, resolved));
 }
 
+export function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => jsonValuesEqual(value, right[index]));
+  }
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(rightRecord, key)
+      && jsonValuesEqual(leftRecord[key], rightRecord[key]));
+}
+
 export function schemaToExample(schema: any, rootSchema = schema, seenRefs = new Set<string>()): unknown {
   if (!schema || typeof schema !== "object") return null;
   if (schema.example !== undefined) return schema.example;
