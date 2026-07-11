@@ -7,6 +7,7 @@ import {
   getPresetPrompt,
   mergeSettings,
   renderPrompt,
+  resolveSamplingParameter,
   trackerToText,
   type SceneMapSettings,
   type SceneMapState,
@@ -561,6 +562,8 @@ async function generateTracker(userId?: string, expectedLatestMessageId?: string
       userId,
       parameters: {
         max_tokens: Math.max(1, Math.floor(settings.maxResponseTokens || 16000)),
+        temperature: resolveSamplingParameter(settings.temperature, 0, 2),
+        top_p: resolveSamplingParameter(settings.topP, 0, 1),
       },
       signal: controller.signal,
     });

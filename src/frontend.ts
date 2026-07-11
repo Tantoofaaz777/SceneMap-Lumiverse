@@ -254,6 +254,16 @@ function renderDrawerSettings() {
         <span>Max response tokens</span>
         <input type="number" min="1" step="1" data-setting="maxResponseTokens" value="${settings.maxResponseTokens}">
       </label>
+      <div class="scenemap-sampler-row">
+        <label>
+          <span>Temperature</span>
+          <input type="number" min="0" max="2" step="0.05" data-setting="temperature" value="${settings.temperature ?? ""}" placeholder="1">
+        </label>
+        <label>
+          <span>Top P</span>
+          <input type="number" min="0" max="1" step="0.05" data-setting="topP" value="${settings.topP ?? ""}" placeholder="1">
+        </label>
+      </div>
       <label>
         <span>Include last messages</span>
         <select data-setting="includeLastXMessages">
@@ -399,6 +409,10 @@ function updateSettingFromControl(target: HTMLInputElement | HTMLSelectElement, 
     settings.showInputBarButton = (target as HTMLInputElement).checked;
   } else if (key === "autoGenerateInterval") {
     settings.autoGenerateInterval = Math.max(1, Math.floor(Number(target.value) || 1));
+  } else if (key === "temperature" || key === "topP") {
+    const value = target.value.trim();
+    const parsed = Number(value);
+    settings[key] = value === "" || !Number.isFinite(parsed) ? null : parsed;
   } else if (key === "maxResponseTokens" || key === "includeLastXMessages") {
     (settings as any)[key] = Math.max(0, Math.floor(Number(target.value) || 0));
   } else {
@@ -1398,6 +1412,8 @@ const styles = `
 .scenemap-settings-group h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .scenemap-settings-shell label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
 .scenemap-auto-row { display: flex; flex-direction: column; gap: 9px; border-top: 1px solid var(--lumiverse-border); border-bottom: 1px solid var(--lumiverse-border); padding: 9px 0; margin: 10px 0; }
+.scenemap-sampler-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.scenemap-sampler-row label { margin-top: 0; }
 .scenemap-settings-shell .scenemap-switch-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; color: var(--lumiverse-text); margin: 0; min-width: 0; }
 .scenemap-interval-field { margin: 0 !important; min-width: 0; }
 .scenemap-switch-row input { position: absolute; opacity: 0; pointer-events: none; }

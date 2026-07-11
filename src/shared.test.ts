@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SCHEMA_VALUE,
   mergeSettings,
+  resolveSamplingParameter,
   schemaToExample,
   trackerToText,
 } from "./shared";
@@ -92,6 +93,26 @@ describe("mergeSettings", () => {
     const settings = mergeSettings(legacySettings);
 
     expect(Object.hasOwn(settings, "showMessageButtons")).toBe(false);
+  });
+
+  test("adds empty sampling overrides to existing settings", () => {
+    const settings = mergeSettings({ maxResponseTokens: 4096 });
+
+    expect(settings.temperature).toBeNull();
+    expect(settings.topP).toBeNull();
+  });
+});
+
+describe("resolveSamplingParameter", () => {
+  test("uses the hint value when a sampling setting is empty", () => {
+    expect(resolveSamplingParameter(null, 0, 2)).toBe(1);
+    expect(resolveSamplingParameter(undefined, 0, 1)).toBe(1);
+  });
+
+  test("keeps valid values and clamps invalid ranges", () => {
+    expect(resolveSamplingParameter(0.25, 0, 2)).toBe(0.25);
+    expect(resolveSamplingParameter(3, 0, 2)).toBe(2);
+    expect(resolveSamplingParameter(-0.5, 0, 1)).toBe(0);
   });
 });
 

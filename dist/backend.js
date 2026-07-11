@@ -149,6 +149,8 @@ var defaultSettings = {
   formatVersion: "F_1.0",
   connectionId: "",
   maxResponseTokens: 16000,
+  temperature: null,
+  topP: null,
   autoGenerateAiTrackers: false,
   autoGenerateInterval: 1,
   showInputBarButton: true,
@@ -179,6 +181,8 @@ function mergeSettings(value) {
   return {
     ...base,
     ...currentValue,
+    temperature: typeof currentValue.temperature === "number" && Number.isFinite(currentValue.temperature) ? currentValue.temperature : base.temperature,
+    topP: typeof currentValue.topP === "number" && Number.isFinite(currentValue.topP) ? currentValue.topP : base.topP,
     schemaPresets,
     displayLayout: currentValue.displayLayout?.sections?.length ? currentValue.displayLayout : base.displayLayout
   };
@@ -190,6 +194,10 @@ function getPresetPrompt(settings, presetKey = settings.schemaPreset) {
 function getPresetLayout(settings, presetKey = settings.schemaPreset) {
   const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   return preset?.displayLayout?.sections?.length ? preset.displayLayout : settings.displayLayout;
+}
+function resolveSamplingParameter(value, minimum, maximum, fallback = 1) {
+  const resolved = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.min(maximum, Math.max(minimum, resolved));
 }
 function schemaToExample(schema, rootSchema = schema, seenRefs = new Set) {
   if (!schema || typeof schema !== "object")
@@ -2290,7 +2298,9 @@ ${exampleResponse}
       connection_id: settings.connectionId || undefined,
       userId,
       parameters: {
-        max_tokens: Math.max(1, Math.floor(settings.maxResponseTokens || 16000))
+        max_tokens: Math.max(1, Math.floor(settings.maxResponseTokens || 16000)),
+        temperature: resolveSamplingParameter(settings.temperature, 0, 2),
+        top_p: resolveSamplingParameter(settings.topP, 0, 1)
       },
       signal: controller.signal
     });

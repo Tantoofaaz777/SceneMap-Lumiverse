@@ -34,6 +34,8 @@ export interface SceneMapSettings {
   formatVersion: string;
   connectionId: string;
   maxResponseTokens: number;
+  temperature: number | null;
+  topP: number | null;
   autoGenerateAiTrackers: boolean;
   autoGenerateInterval: number;
   showInputBarButton: boolean;
@@ -213,6 +215,8 @@ export const defaultSettings: SceneMapSettings = {
   formatVersion: "F_1.0",
   connectionId: "",
   maxResponseTokens: 16000,
+  temperature: null,
+  topP: null,
   autoGenerateAiTrackers: false,
   autoGenerateInterval: 1,
   showInputBarButton: true,
@@ -246,6 +250,12 @@ export function mergeSettings(value: Partial<SceneMapSettings> | null | undefine
   return {
     ...base,
     ...currentValue,
+    temperature: typeof currentValue.temperature === "number" && Number.isFinite(currentValue.temperature)
+      ? currentValue.temperature
+      : base.temperature,
+    topP: typeof currentValue.topP === "number" && Number.isFinite(currentValue.topP)
+      ? currentValue.topP
+      : base.topP,
     schemaPresets,
     displayLayout: currentValue.displayLayout?.sections?.length ? currentValue.displayLayout : base.displayLayout,
   };
@@ -259,6 +269,11 @@ export function getPresetPrompt(settings: SceneMapSettings, presetKey = settings
 export function getPresetLayout(settings: SceneMapSettings, presetKey = settings.schemaPreset): TrackerBoardDisplayLayout {
   const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   return preset?.displayLayout?.sections?.length ? preset.displayLayout : settings.displayLayout;
+}
+
+export function resolveSamplingParameter(value: unknown, minimum: number, maximum: number, fallback = 1): number {
+  const resolved = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.min(maximum, Math.max(minimum, resolved));
 }
 
 export function schemaToExample(schema: any, rootSchema = schema, seenRefs = new Set<string>()): unknown {
