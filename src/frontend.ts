@@ -350,7 +350,7 @@ function mountSettingsSelects(settings: SceneMapSettings) {
       ...Array.from({ length: 20 }, (_, index) => ({ value: String(index + 1), label: `Last ${index + 1}` })),
     ],
     String(settings.includeLastXMessages),
-    { searchPlaceholder: "Search message count..." },
+    { searchThreshold: Number.MAX_SAFE_INTEGER },
   );
   mount(
     "schemaPreset",

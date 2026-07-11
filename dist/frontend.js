@@ -548,7 +548,7 @@ function mountSettingsSelects(settings) {
   mount("includeLastXMessages", [
     { value: "0", label: "All messages up to target" },
     ...Array.from({ length: 20 }, (_, index) => ({ value: String(index + 1), label: `Last ${index + 1}` }))
-  ], String(settings.includeLastXMessages), { searchPlaceholder: "Search message count..." });
+  ], String(settings.includeLastXMessages), { searchThreshold: Number.MAX_SAFE_INTEGER });
   mount("schemaPreset", Object.entries(settings.schemaPresets).map(([key, preset]) => ({ value: key, label: preset.name })), settings.schemaPreset, { searchPlaceholder: "Search presets..." });
 }
 function updateNativeSetting(key, value) {
