@@ -139,10 +139,7 @@ If this object is not empty, use it as the baseline and update it instead of sta
 {{previous_tracker}}
 \`\`\`
 
-EXAMPLE OF A PERFECT RESPONSE:
-\`\`\`json
-{{example_response}}
-\`\`\``;
+{{example_section}}`;
 var defaultSettings = {
   version: "1.0.1",
   formatVersion: "F_1.0",
@@ -151,7 +148,6 @@ var defaultSettings = {
   autoGenerateAiTrackers: false,
   autoGenerateInterval: 1,
   showInputBarButton: true,
-  showMessageButtons: true,
   schemaPreset: "default",
   schemaPresets: {
     default: {
@@ -170,15 +166,17 @@ function mergeSettings(value) {
   const base = cloneDefaultSettings();
   if (!value || typeof value !== "object")
     return base;
+  const currentValue = { ...value };
+  delete currentValue.showMessageButtons;
   const schemaPresets = {
     ...base.schemaPresets,
-    ...value.schemaPresets ?? {}
+    ...currentValue.schemaPresets ?? {}
   };
   return {
     ...base,
-    ...value,
+    ...currentValue,
     schemaPresets,
-    displayLayout: value.displayLayout?.sections?.length ? value.displayLayout : base.displayLayout
+    displayLayout: currentValue.displayLayout?.sections?.length ? currentValue.displayLayout : base.displayLayout
   };
 }
 function getPresetPrompt(settings, presetKey = settings.schemaPreset) {
@@ -202,10 +200,51 @@ function formatPrimitive(value) {
   return JSON.stringify(value);
 }
 
+// src/settings-draft.ts
+class SettingsDraftTracker {
+  revision = 0;
+  savedRevision = 0;
+  pendingSave = null;
+  get dirty() {
+    return this.revision !== this.savedRevision;
+  }
+  get saving() {
+    return this.pendingSave !== null;
+  }
+  markChanged() {
+    this.revision += 1;
+  }
+  beginSave(requestId) {
+    if (this.pendingSave)
+      return false;
+    this.pendingSave = { requestId, revision: this.revision };
+    return true;
+  }
+  acknowledge(requestId) {
+    if (this.pendingSave?.requestId !== requestId)
+      return false;
+    this.savedRevision = this.pendingSave.revision;
+    this.pendingSave = null;
+    return true;
+  }
+  fail(requestId) {
+    if (this.pendingSave?.requestId !== requestId)
+      return false;
+    this.pendingSave = null;
+    return true;
+  }
+  reset() {
+    this.revision = 0;
+    this.savedRevision = 0;
+    this.pendingSave = null;
+  }
+}
+
 // src/frontend.ts
 var state = {
   settings: defaultSettings,
   chatId: null,
+  effectivePresetKey: defaultSettings.schemaPreset,
   latest: null,
   messagesBehind: 0,
   autoGenerateMessagesRemaining: null,
@@ -220,12 +259,14 @@ var settingsRootRef = null;
 var toolbarRootRef = null;
 var tabHandle = null;
 var isRefreshingState = false;
+var isGenerationRequestPending = false;
 var editorRequestSeq = 0;
-var pendingMessageGenerationId = null;
+var settingsSaveRequestSeq = 0;
 var pendingTextEditors = new Map;
-var messageActionButtons = new Map;
+var settingsDraft = new SettingsDraftTracker;
 var iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
 function setup(ctx) {
+  settingsDraft.reset();
   ctxRef = ctx;
   const removeStyle = ctx.dom.addStyle(styles);
   const tab = ctx.ui.registerDrawerTab({
@@ -240,23 +281,34 @@ function setup(ctx) {
   tabHandle = tab;
   rootRef = tab.root;
   rootRef.classList.add("scenemap-lv");
-  settingsRootRef = ctx.ui.mount("settings_extensions");
-  settingsRootRef.classList.add("scenemap-settings-root");
-  toolbarRootRef = ctx.ui.mount("chat_toolbar");
-  toolbarRootRef.classList.add("scenemap-chat-toolbar-root");
+  const settingsRoot = ctx.ui.mount("settings_extensions");
+  settingsRootRef = settingsRoot;
+  settingsRoot.classList.add("scenemap-settings-root");
+  const toolbarRoot = ctx.ui.mount("chat_toolbar");
+  toolbarRootRef = toolbarRoot;
+  toolbarRoot.classList.add("scenemap-chat-toolbar-root");
   render();
   const offBackend = ctx.onBackendMessage((payload) => {
     if (payload?.type === "state") {
       isRefreshingState = false;
-      pendingMessageGenerationId = null;
-      state = payload.state;
+      isGenerationRequestPending = false;
+      const incomingState = payload.state;
+      if (typeof payload.settingsSaveRequestId === "string") {
+        settingsDraft.acknowledge(payload.settingsSaveRequestId);
+      }
+      state = settingsDraft.dirty ? { ...incomingState, settings: state.settings } : incomingState;
       render();
       return;
     }
     if (payload?.type === "error") {
-      pendingMessageGenerationId = null;
+      isRefreshingState = false;
+      isGenerationRequestPending = false;
+      const saveFailed = typeof payload.requestId === "string" && settingsDraft.fail(payload.requestId);
+      renderDrawer();
+      renderChatToolbar();
+      if (saveFailed)
+        renderSettings();
       showInlineError(payload.message);
-      updateAllMessageActionButtons();
     }
     if (payload?.type === "text_editor_result") {
       handleTextEditorResult(payload);
@@ -279,24 +331,23 @@ function setup(ctx) {
   rootRef.addEventListener("click", handleClick);
   rootRef.addEventListener("change", handleChange);
   rootRef.addEventListener("input", handleInput);
-  settingsRootRef.addEventListener("click", handleClick);
-  settingsRootRef.addEventListener("change", handleChange);
-  settingsRootRef.addEventListener("input", handleInput);
-  toolbarRootRef.addEventListener("click", handleClick);
+  settingsRoot.addEventListener("click", handleClick);
+  settingsRoot.addEventListener("change", handleChange);
+  settingsRoot.addEventListener("input", handleInput);
+  toolbarRoot.addEventListener("click", handleClick);
   requestState();
   return () => {
     rootRef?.removeEventListener("click", handleClick);
     rootRef?.removeEventListener("change", handleChange);
     rootRef?.removeEventListener("input", handleInput);
-    settingsRootRef?.removeEventListener("click", handleClick);
-    settingsRootRef?.removeEventListener("change", handleChange);
-    settingsRootRef?.removeEventListener("input", handleInput);
-    toolbarRootRef?.removeEventListener("click", handleClick);
+    settingsRoot.removeEventListener("click", handleClick);
+    settingsRoot.removeEventListener("change", handleChange);
+    settingsRoot.removeEventListener("input", handleInput);
+    toolbarRoot.removeEventListener("click", handleClick);
     offBackend();
     for (const off of offEvents)
       off();
     tab.destroy();
-    clearMessageActionButtons();
     removeStyle();
     ctx.dom.cleanup();
     ctxRef = null;
@@ -304,89 +355,12 @@ function setup(ctx) {
     settingsRootRef = null;
     toolbarRootRef = null;
     tabHandle = null;
+    isGenerationRequestPending = false;
+    settingsDraft.reset();
   };
 }
 function send(payload) {
   ctxRef?.sendToBackend(payload);
-}
-function scheduleMessageActionButtons() {
-  window.requestAnimationFrame(() => renderMessageActionButtons());
-}
-function renderMessageActionButtons() {
-  const ctx = ctxRef;
-  if (!state.settings.showMessageButtons) {
-    clearMessageActionButtons();
-    return;
-  }
-  if (!ctx?.dom.listMessageElements || !ctx.dom.inject)
-    return;
-  for (const { messageId, element } of ctx.dom.listMessageElements()) {
-    const existing = messageActionButtons.get(messageId);
-    if (existing) {
-      updateMessageActionButton(existing, messageId);
-      continue;
-    }
-    if (!element.matches('[data-part="character"], [data-part="streaming"]'))
-      continue;
-    const metaPill = element.querySelector('[class*="metaPill"]');
-    if (!metaPill)
-      continue;
-    const injected = ctx.dom.inject(metaPill, `
-      <button
-        type="button"
-        class="scenemap-message-action"
-        title="Generate SceneMap for this message"
-        aria-label="Generate SceneMap for this message"
-        data-scenemap-message-action="${escapeAttr(messageId)}"
-      >
-        ${iconSvg}
-      </button>
-    `, "beforeend");
-    const button = injected.querySelector(".scenemap-message-action");
-    if (button) {
-      button.classList.add(...Array.from(metaPill.classList));
-      button.addEventListener("mouseover", (event) => event.stopPropagation(), true);
-      button.addEventListener("mouseenter", (event) => event.stopPropagation(), true);
-      button.addEventListener("pointerenter", (event) => event.stopPropagation(), true);
-    }
-    updateMessageActionButton(injected, messageId);
-    injected.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (pendingMessageGenerationId)
-        return;
-      if (state.generatingMessageId && state.generatingMessageId !== messageId)
-        return;
-      pendingMessageGenerationId = messageId;
-      updateAllMessageActionButtons();
-      send({ type: "generate_tracker", messageId });
-    });
-    messageActionButtons.set(messageId, injected);
-  }
-}
-function updateMessageActionButton(root, messageId) {
-  const button = root.matches(".scenemap-message-action") ? root : root.querySelector(".scenemap-message-action");
-  if (!button)
-    return;
-  const isGenerating = state.generatingMessageId === messageId || pendingMessageGenerationId === messageId;
-  const isUnavailable = Boolean(state.generatingMessageId && state.generatingMessageId !== messageId || pendingMessageGenerationId && pendingMessageGenerationId !== messageId);
-  const label = isGenerating ? "Cancel SceneMap generation" : "Generate SceneMap for this message";
-  button.classList.toggle("is-generating", isGenerating);
-  button.toggleAttribute("disabled", isUnavailable);
-  button.title = label;
-  button.setAttribute("aria-label", label);
-  button.innerHTML = isGenerating ? refreshSvg() : iconSvg;
-}
-function updateAllMessageActionButtons() {
-  for (const [messageId, button] of messageActionButtons)
-    updateMessageActionButton(button, messageId);
-}
-function clearMessageActionButtons() {
-  const ctx = ctxRef;
-  for (const button of messageActionButtons.values())
-    ctx?.dom.uninject(button);
-  messageActionButtons.clear();
-  pendingMessageGenerationId = null;
 }
 function requestState(showRefresh = false) {
   if (showRefresh) {
@@ -399,7 +373,6 @@ function render() {
   renderDrawer();
   renderSettings();
   renderChatToolbar();
-  scheduleMessageActionButtons();
   tabHandle?.setBadge(state.messagesBehind > 0 ? String(state.messagesBehind) : null);
 }
 function renderChatToolbar() {
@@ -409,18 +382,19 @@ function renderChatToolbar() {
     toolbarRootRef.innerHTML = "";
     return;
   }
-  const label = state.generatingMessageId ? "Cancel SceneMap generation" : state.latest ? "Regenerate SceneMap" : "Generate SceneMap";
+  const isGenerating = Boolean(state.generatingMessageId || isGenerationRequestPending);
+  const label = isGenerating ? "Cancel SceneMap generation" : state.latest ? "Regenerate SceneMap" : "Generate SceneMap";
   const isBehind = !state.latest || state.messagesBehind > 0;
   toolbarRootRef.innerHTML = `
     <button
       type="button"
-      class="scenemap-chat-toolbar-btn ${isBehind ? "is-attention" : ""} ${state.generatingMessageId ? "is-generating" : ""}"
+      class="scenemap-chat-toolbar-btn ${isBehind ? "is-attention" : ""} ${isGenerating ? "is-generating" : ""}"
       data-action="generate"
       title="${escapeAttr(label)}"
       aria-label="${escapeAttr(label)}"
-      ${state.activeMessageId ? "" : "disabled"}
+      ${state.activeMessageId && !isGenerationRequestPending ? "" : "disabled"}
     >
-      ${state.generatingMessageId ? refreshSvg() : iconSvg}
+      ${isGenerating ? refreshSvg() : iconSvg}
     </button>
   `;
 }
@@ -428,13 +402,13 @@ function renderDrawer() {
   if (!rootRef)
     return;
   const settings = mergeSettings(state.settings);
-  const layout = getPresetLayout(settings);
+  const layout = getPresetLayout(settings, state.effectivePresetKey);
   const latest = state.latest;
   rootRef.innerHTML = `
     <div class="scenemap-shell">
       <header class="scenemap-header">
-        <button class="scenemap-pill-action scenemap-primary" data-action="generate" ${state.activeMessageId ? "" : "disabled"}>
-          ${state.generatingMessageId ? "Cancel" : latest ? "Regenerate" : "Generate"}
+        <button class="scenemap-pill-action scenemap-primary" data-action="generate" ${state.activeMessageId && !isGenerationRequestPending ? "" : "disabled"}>
+          ${state.generatingMessageId || isGenerationRequestPending ? "Cancel" : latest ? "Regenerate" : "Generate"}
         </button>
         <button class="scenemap-pill-action" data-action="edit" ${latest ? "" : "disabled"}>Edit</button>
         <button class="scenemap-pill-action scenemap-danger" data-action="delete" ${latest ? "" : "disabled"}>Delete</button>
@@ -478,18 +452,11 @@ function renderSettings() {
           <input type="number" min="1" step="1" data-setting="autoGenerateInterval" value="${settings.autoGenerateInterval > 1 ? settings.autoGenerateInterval : ""}" placeholder="Empty = 1 = every assistant message">
         </label>
       </div>
-      <div class="scenemap-auto-row">
-        <label class="scenemap-switch-row">
-          <span>Show input bar button</span>
-          <input type="checkbox" data-setting="showInputBarButton" ${settings.showInputBarButton ? "checked" : ""}>
-          <span class="scenemap-switch" aria-hidden="true"></span>
-        </label>
-        <label class="scenemap-switch-row">
-          <span>Show message buttons</span>
-          <input type="checkbox" data-setting="showMessageButtons" ${settings.showMessageButtons ? "checked" : ""}>
-          <span class="scenemap-switch" aria-hidden="true"></span>
-        </label>
-      </div>
+      <label class="scenemap-switch-row">
+        <span>Show input bar button</span>
+        <input type="checkbox" data-setting="showInputBarButton" ${settings.showInputBarButton ? "checked" : ""}>
+        <span class="scenemap-switch" aria-hidden="true"></span>
+      </label>
       <label>
         <span>Max response tokens</span>
         <input type="number" min="1" step="1" data-setting="maxResponseTokens" value="${settings.maxResponseTokens}">
@@ -521,7 +488,7 @@ function renderSettings() {
           <button class="scenemap-pill-action" data-action="edit-layout">Layout</button>
         </div>
         <div class="scenemap-settings-actions-right">
-          <button class="scenemap-pill-action scenemap-primary" data-action="save-settings">Save settings</button>
+          <button class="scenemap-pill-action scenemap-primary" data-action="save-settings" ${settingsDraft.saving ? "disabled" : ""}>${settingsDraft.saving ? "Saving..." : "Save settings"}</button>
         </div>
       </div>
     </section>
@@ -563,12 +530,21 @@ function handleClick(event) {
   const action = button.dataset.action;
   if (action === "refresh")
     requestState(true);
-  if (action === "generate")
-    send({ type: "generate_tracker", messageId: state.activeMessageId });
-  if (action === "edit" && state.latest)
-    openJsonEditor("Edit Tracker JSON", state.latest.data, (data) => {
-      send({ type: "edit_tracker", messageId: state.latest?.messageId, data });
+  if (action === "generate") {
+    if (isGenerationRequestPending)
+      return;
+    isGenerationRequestPending = true;
+    renderDrawer();
+    renderChatToolbar();
+    send({ type: "generate_tracker" });
+  }
+  if (action === "edit" && state.latest && state.chatId) {
+    const { messageId, swipeId, data: trackerData } = state.latest;
+    const chatId = state.chatId;
+    openJsonEditor("Edit Tracker JSON", trackerData, (data) => {
+      send({ type: "edit_tracker", chatId, messageId, swipeId, data });
     });
+  }
   if (action === "delete" && state.latest)
     send({ type: "delete_tracker", messageId: state.latest.messageId });
   if (action === "create-preset")
@@ -588,8 +564,16 @@ function handleClick(event) {
   if (action === "edit-layout")
     editLayout();
   if (action === "save-settings") {
-    send({ type: "save_settings", settings: state.settings });
+    const requestId = `settings-${Date.now()}-${++settingsSaveRequestSeq}`;
+    if (!settingsDraft.beginSave(requestId))
+      return;
+    renderSettings();
+    send({ type: "save_settings", requestId, settings: state.settings });
   }
+}
+function updateSettingsDraft(settings) {
+  settingsDraft.markChanged();
+  state = { ...state, settings };
 }
 function handleChange(event) {
   const target = event.target;
@@ -609,8 +593,8 @@ function updateSettingFromControl(target, key) {
   const settings = mergeSettings(state.settings);
   if (key === "autoGenerateAiTrackers") {
     settings.autoGenerateAiTrackers = target.checked;
-  } else if (key === "showInputBarButton" || key === "showMessageButtons") {
-    settings[key] = target.checked;
+  } else if (key === "showInputBarButton") {
+    settings.showInputBarButton = target.checked;
   } else if (key === "autoGenerateInterval") {
     settings.autoGenerateInterval = Math.max(1, Math.floor(Number(target.value) || 1));
   } else if (key === "maxResponseTokens" || key === "includeLastXMessages") {
@@ -618,10 +602,10 @@ function updateSettingFromControl(target, key) {
   } else {
     settings[key] = target.value;
   }
-  state = { ...state, settings };
+  updateSettingsDraft(settings);
   if (key === "schemaPreset")
     render();
-  if (key === "showInputBarButton" || key === "showMessageButtons")
+  if (key === "showInputBarButton")
     render();
 }
 function createPreset() {
@@ -635,7 +619,7 @@ function createPreset() {
       promptJson: getPresetPrompt(settings),
       displayLayout: cloneLayout(getPresetLayout(settings))
     };
-    state = { ...state, settings: { ...settings, schemaPreset: key } };
+    updateSettingsDraft({ ...settings, schemaPreset: key });
     render();
   });
 }
@@ -645,7 +629,7 @@ function renamePreset() {
   const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
   openNameEditor("Rename Preset", preset.name, "Save", (name) => {
     settings.schemaPresets[key] = { ...preset, name };
-    state = { ...state, settings };
+    updateSettingsDraft(settings);
     render();
   });
 }
@@ -667,7 +651,7 @@ async function deletePreset() {
     return;
   delete settings.schemaPresets[key];
   const fallbackKey = settings.schemaPresets.default ? "default" : Object.keys(settings.schemaPresets)[0];
-  state = { ...state, settings: { ...settings, schemaPreset: fallbackKey } };
+  updateSettingsDraft({ ...settings, schemaPreset: fallbackKey });
   render();
 }
 function exportPreset() {
@@ -718,7 +702,7 @@ async function importPreset() {
         displayLayout: imported.layout
       };
       settings.schemaPreset = key;
-      state = { ...state, settings };
+      updateSettingsDraft(settings);
       render();
     });
   } catch (err) {
@@ -846,7 +830,7 @@ function editActiveSchema() {
   const preset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   openJsonEditor("SceneMap Schema", preset.value, (data) => {
     settings.schemaPresets[settings.schemaPreset] = { ...preset, value: data };
-    state = { ...state, settings };
+    updateSettingsDraft(settings);
     render();
   });
 }
@@ -856,7 +840,7 @@ function editPrompt() {
   const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
   openTextEditor("SceneMap Prompt", getPresetPrompt(settings, key), (text) => {
     settings.schemaPresets[key] = { ...preset, promptJson: text || DEFAULT_PROMPT_JSON };
-    state = { ...state, settings };
+    updateSettingsDraft(settings);
     render();
   });
 }
@@ -986,7 +970,7 @@ function editLayout() {
         moveItem(workingLayout.sections[sectionIndex].fields[fieldIndex].fields ?? [], childIndex, childIndex + 1);
       }
       if (action === "reset-layout") {
-        workingLayout.sections = cloneLayout(DEFAULT_DISPLAY_LAYOUT).sections;
+        workingLayout.sections = createSchemaDefaultLayout(preset.value).sections;
       }
       if (action === "cancel") {
         modal.dismiss();
@@ -995,7 +979,7 @@ function editLayout() {
       if (action === "save-layout") {
         validateLayout(workingLayout);
         settings.schemaPresets[key] = { ...preset, displayLayout: cloneLayout(workingLayout) };
-        state = { ...state, settings };
+        updateSettingsDraft(settings);
         render();
         modal.dismiss();
         return;
@@ -1136,29 +1120,73 @@ function renderDisplayOptions(selected, allowCards) {
   return displays.map((display) => `<option value="${display.value}" ${display.value === selected ? "selected" : ""}>${display.label}</option>`).join("");
 }
 function extractSchemaFieldOptions(schema) {
-  const properties = getSchemaProperties(schema);
-  return Object.entries(properties).flatMap(([key, value]) => schemaToOptions(value, key, key));
+  const normalized = normalizeSchemaForLayout(schema, schema);
+  const properties = getSchemaProperties(normalized);
+  if (!properties)
+    return [];
+  return Object.entries(properties).flatMap(([key, value]) => schemaToOptions(value, key, key, schema));
 }
-function schemaToOptions(schema, path, labelSeed) {
-  const record = getRecord(schema);
+function schemaToOptions(schema, path, labelSeed, rootSchema) {
+  const record = normalizeSchemaForLayout(schema, rootSchema);
   const type = record.type;
   if (type === "array") {
-    const items = getRecord(record.items);
-    if (getSchemaProperties(items)) {
+    const items = normalizeSchemaForLayout(record.items, rootSchema);
+    const itemProperties = getSchemaProperties(items);
+    if (itemProperties) {
       return [{
         path,
         label: schemaLabel(record, labelSeed),
         display: "character_cards",
-        children: Object.entries(getSchemaProperties(items)).flatMap(([key, value]) => schemaToOptions(value, key, key))
+        children: Object.entries(itemProperties).flatMap(([key, value]) => schemaToOptions(value, key, key, rootSchema))
       }];
     }
     return [{ path, label: schemaLabel(record, labelSeed), display: "chips" }];
   }
   const properties = getSchemaProperties(record);
   if (properties) {
-    return Object.entries(properties).flatMap(([key, value]) => schemaToOptions(value, `${path}.${key}`, key));
+    return Object.entries(properties).flatMap(([key, value]) => schemaToOptions(value, `${path}.${key}`, key, rootSchema));
   }
   return [{ path, label: schemaLabel(record, labelSeed), display: defaultDisplayForSchema(record, path) }];
+}
+function normalizeSchemaForLayout(schema, rootSchema, seenRefs = new Set) {
+  const source = getRecord(schema);
+  let normalized = { ...source };
+  const ref = typeof source.$ref === "string" ? source.$ref : null;
+  if (ref?.startsWith("#/") && !seenRefs.has(ref)) {
+    const resolved = resolveLocalLayoutRef(rootSchema, ref);
+    if (resolved) {
+      const nextSeen = new Set(seenRefs).add(ref);
+      normalized = mergeLayoutSchemas(normalizeSchemaForLayout(resolved, rootSchema, nextSeen), normalized);
+    }
+  }
+  for (const keyword of ["allOf", "oneOf", "anyOf"]) {
+    const variants = source[keyword];
+    if (!Array.isArray(variants))
+      continue;
+    for (const variant of variants) {
+      normalized = mergeLayoutSchemas(normalized, normalizeSchemaForLayout(variant, rootSchema, seenRefs));
+    }
+  }
+  return normalized;
+}
+function mergeLayoutSchemas(left, right) {
+  const leftProperties = getSchemaProperties(left);
+  const rightProperties = getSchemaProperties(right);
+  return {
+    ...left,
+    ...right,
+    ...leftProperties || rightProperties ? { properties: { ...leftProperties ?? {}, ...rightProperties ?? {} } } : {}
+  };
+}
+function resolveLocalLayoutRef(rootSchema, ref) {
+  let current = rootSchema;
+  for (const token of ref.slice(2).split("/")) {
+    if (!current || typeof current !== "object" || Array.isArray(current))
+      return null;
+    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+    current = current[key];
+  }
+  return current;
 }
 function getSchemaProperties(schema) {
   const record = getRecord(schema);
@@ -1201,14 +1229,26 @@ function getAvailableChildOptions(parent, options, currentPath) {
   }
   return available;
 }
-function createFieldFromOption(option) {
+function createFieldFromOption(option, maxChildren = 4) {
   if (!option)
     return { path: "", label: "", display: "text" };
   return {
     path: option.path,
     label: option.label,
     display: option.display,
-    fields: option.display === "character_cards" ? option.children?.slice(0, 4).map((child) => ({ path: child.path, label: child.label, display: child.display === "character_cards" ? "text" : child.display })) : undefined
+    fields: option.display === "character_cards" ? option.children?.slice(0, maxChildren).map((child) => ({ path: child.path, label: child.label, display: child.display === "character_cards" ? "text" : child.display })) : undefined
+  };
+}
+function createSchemaDefaultLayout(schema) {
+  if (JSON.stringify(schema) === JSON.stringify(DEFAULT_SCHEMA_VALUE))
+    return cloneLayout(DEFAULT_DISPLAY_LAYOUT);
+  const options = extractSchemaFieldOptions(schema);
+  const title = typeof schema.title === "string" && schema.title.trim() ? schema.title.trim() : "Scene";
+  return {
+    sections: [{
+      title,
+      fields: options.map((option) => createFieldFromOption(option, Number.POSITIVE_INFINITY))
+    }]
   };
 }
 function cloneLayout(layout) {
@@ -1479,12 +1519,6 @@ var styles = `
 .scenemap-chat-toolbar-btn.is-generating svg { animation: scenemap-spin .9s linear infinite; }
 .scenemap-chat-toolbar-btn:disabled { opacity: .45; cursor: default; }
 .scenemap-chat-toolbar-btn svg { width: 14px; height: 14px; }
-.scenemap-message-action { position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; margin: 0; padding: 0; box-sizing: border-box; cursor: default; opacity: 1; transition: color .16s ease, border-color .16s ease, background .16s ease; }
-.scenemap-message-action svg { width: 13px; height: 13px; }
-.scenemap-message-action.is-generating { color: var(--lumiverse-success, var(--lumiverse-accent)); animation: scenemap-status-pulse 1.8s ease-in-out infinite; }
-.scenemap-message-action.is-generating svg { animation: scenemap-spin .9s linear infinite; }
-.scenemap-message-action:disabled { opacity: .45; pointer-events: none; }
-.scenemap-message-action:hover { color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); background: color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 12%, transparent); }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scenemap-modal-spacer { flex: 1 1 auto; }
 .scenemap-card { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
@@ -1600,5 +1634,6 @@ var styles = `
 }
 `;
 export {
-  setup
+  setup,
+  createSchemaDefaultLayout
 };

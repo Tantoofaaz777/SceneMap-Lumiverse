@@ -37,7 +37,6 @@ export interface SceneMapSettings {
   autoGenerateAiTrackers: boolean;
   autoGenerateInterval: number;
   showInputBarButton: boolean;
-  showMessageButtons: boolean;
   schemaPreset: string;
   schemaPresets: Record<string, SceneMapPreset>;
   includeLastXMessages: number;
@@ -55,6 +54,7 @@ export interface TrackerEntry {
 export interface SceneMapState {
   settings: SceneMapSettings;
   chatId: string | null;
+  effectivePresetKey: string;
   latest: TrackerEntry | null;
   messagesBehind: number;
   autoGenerateMessagesRemaining: number | null;
@@ -206,10 +206,7 @@ If this object is not empty, use it as the baseline and update it instead of sta
 {{previous_tracker}}
 \`\`\`
 
-EXAMPLE OF A PERFECT RESPONSE:
-\`\`\`json
-{{example_response}}
-\`\`\``;
+{{example_section}}`;
 
 export const defaultSettings: SceneMapSettings = {
   version: "1.0.1",
@@ -219,7 +216,6 @@ export const defaultSettings: SceneMapSettings = {
   autoGenerateAiTrackers: false,
   autoGenerateInterval: 1,
   showInputBarButton: true,
-  showMessageButtons: true,
   schemaPreset: "default",
   schemaPresets: {
     default: {
@@ -239,15 +235,19 @@ export function cloneDefaultSettings(): SceneMapSettings {
 export function mergeSettings(value: Partial<SceneMapSettings> | null | undefined): SceneMapSettings {
   const base = cloneDefaultSettings();
   if (!value || typeof value !== "object") return base;
+  const currentValue = { ...value } as Partial<SceneMapSettings> & {
+    showMessageButtons?: unknown;
+  };
+  delete currentValue.showMessageButtons;
   const schemaPresets = {
     ...base.schemaPresets,
-    ...(value.schemaPresets ?? {}),
+    ...(currentValue.schemaPresets ?? {}),
   };
   return {
     ...base,
-    ...value,
+    ...currentValue,
     schemaPresets,
-    displayLayout: value.displayLayout?.sections?.length ? value.displayLayout : base.displayLayout,
+    displayLayout: currentValue.displayLayout?.sections?.length ? currentValue.displayLayout : base.displayLayout,
   };
 }
 
@@ -261,28 +261,90 @@ export function getPresetLayout(settings: SceneMapSettings, presetKey = settings
   return preset?.displayLayout?.sections?.length ? preset.displayLayout : settings.displayLayout;
 }
 
-export function schemaToExample(schema: any): unknown {
+export function schemaToExample(schema: any, rootSchema = schema, seenRefs = new Set<string>()): unknown {
   if (!schema || typeof schema !== "object") return null;
   if (schema.example !== undefined) return schema.example;
-  switch (schema.type) {
+  if (schema.const !== undefined) return schema.const;
+  if (schema.default !== undefined) return schema.default;
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
+  if (typeof schema.$ref === "string" && schema.$ref.startsWith("#/")) {
+    if (seenRefs.has(schema.$ref)) return null;
+    const resolved = resolveLocalSchemaRef(rootSchema, schema.$ref);
+    if (resolved) return schemaToExample(resolved, rootSchema, new Set([...seenRefs, schema.$ref]));
+  }
+  const alternatives = Array.isArray(schema.oneOf) ? schema.oneOf : Array.isArray(schema.anyOf) ? schema.anyOf : null;
+  if (alternatives?.length) return schemaToExample(alternatives[0], rootSchema, seenRefs);
+  if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
+    const parts = schema.allOf.map((part: unknown) => schemaToExample(part, rootSchema, seenRefs));
+    if (parts.every((part: unknown) => part && typeof part === "object" && !Array.isArray(part))) {
+      return Object.assign({}, ...parts);
+    }
+    return parts.find((part: unknown) => part !== null) ?? null;
+  }
+
+  const declaredType = Array.isArray(schema.type)
+    ? schema.type.find((type: unknown) => type !== "null")
+    : schema.type;
+  const type = declaredType ?? (schema.properties ? "object" : schema.items ? "array" : undefined);
+  switch (type) {
     case "object": {
       const obj: Record<string, unknown> = {};
       const properties = schema.properties && typeof schema.properties === "object" ? schema.properties : {};
-      for (const [key, child] of Object.entries(properties)) obj[key] = schemaToExample(child);
+      for (const [key, child] of Object.entries(properties)) obj[key] = schemaToExample(child, rootSchema, seenRefs);
       return obj;
     }
-    case "array":
-      return schema.items ? [schemaToExample(schema.items)] : [];
-    case "string":
-      return schema.description || "string";
+    case "array": {
+      const length = Math.max(0, Number.isInteger(schema.minItems) ? schema.minItems : schema.items ? 1 : 0);
+      return Array.from({ length }, () => schema.items ? schemaToExample(schema.items, rootSchema, seenRefs) : null);
+    }
+    case "string": {
+      const formatExamples: Record<string, string> = {
+        date: "2026-01-01",
+        time: "12:00:00Z",
+        "date-time": "2026-01-01T12:00:00Z",
+        email: "user@example.com",
+        hostname: "example.com",
+        ipv4: "192.0.2.1",
+        ipv6: "2001:db8::1",
+        uri: "https://example.com/",
+        uuid: "123e4567-e89b-42d3-a456-426614174000",
+      };
+      let value = formatExamples[schema.format] ?? (typeof schema.description === "string" ? schema.description : "string");
+      const minLength = Number.isInteger(schema.minLength) ? Math.max(0, schema.minLength) : 0;
+      if (value.length < minLength) value = value.padEnd(minLength, "x");
+      if (Number.isInteger(schema.maxLength)) value = value.slice(0, Math.max(0, schema.maxLength));
+      return value;
+    }
     case "number":
-    case "integer":
-      return 0;
+    case "integer": {
+      const integer = type === "integer";
+      const step = typeof schema.multipleOf === "number" && schema.multipleOf > 0 ? schema.multipleOf : integer ? 1 : 0.1;
+      let value = typeof schema.minimum === "number" ? schema.minimum : 0;
+      if (typeof schema.exclusiveMinimum === "number") value = Math.max(value, schema.exclusiveMinimum + step);
+      if (schema.exclusiveMinimum === true && typeof schema.minimum === "number") value = schema.minimum + step;
+      if (typeof schema.multipleOf === "number" && schema.multipleOf > 0) {
+        value = Math.ceil(value / schema.multipleOf) * schema.multipleOf;
+      }
+      if (integer) value = Math.ceil(value);
+      if (typeof schema.maximum === "number") value = Math.min(value, schema.maximum);
+      if (typeof schema.exclusiveMaximum === "number" && value >= schema.exclusiveMaximum) value = schema.exclusiveMaximum - step;
+      return value;
+    }
     case "boolean":
       return false;
     default:
       return null;
   }
+}
+
+function resolveLocalSchemaRef(rootSchema: unknown, ref: string): unknown {
+  let current = rootSchema;
+  for (const token of ref.slice(2).split("/")) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) return null;
+    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
 }
 
 export function parseModelJson(content: string): object {
@@ -300,7 +362,7 @@ export function parseModelJson(content: string): object {
 }
 
 export function renderPrompt(template: string, values: Record<string, string>): string {
-  return template.replace(/\{\{\s*(schema|previous_tracker|example_response)\s*\}\}/g, (_match, key) => values[key] ?? "");
+  return template.replace(/\{\{\s*(schema|previous_tracker|example_response|example_section)\s*\}\}/g, (_match, key) => values[key] ?? "");
 }
 
 export function humanizeTrackerKey(key: string): string {
@@ -324,7 +386,11 @@ export function trackerToText(tracker: unknown, layout?: TrackerBoardDisplayLayo
   const record = tracker as Record<string, unknown>;
   const progressPaths = collectProgressPaths(layout);
   const sceneLines = renderSceneMapSummary(record, progressPaths);
-  if (sceneLines.length > 0) return sceneLines.join("\n");
+  if (sceneLines.length > 0) {
+    const additionalLines = renderAdditionalSceneMapFields(record, progressPaths);
+    if (additionalLines.length > 0) sceneLines.push("", ...additionalLines);
+    return sceneLines.join("\n");
+  }
 
   const lines: string[] = [];
   for (const [key, value] of Object.entries(record)) {
@@ -334,6 +400,50 @@ export function trackerToText(tracker: unknown, layout?: TrackerBoardDisplayLayo
     lines.push(...child);
   }
   return lines.join("\n");
+}
+
+function renderAdditionalSceneMapFields(tracker: Record<string, unknown>, progressPaths: Set<string>): string[] {
+  const standardKeys = new Set(["time", "location", "weather", "topics", "charactersPresent", "characters"]);
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(tracker)) {
+    if (standardKeys.has(key)) continue;
+    appendAdditionalLines(lines, trackerValueToText(key, value, 0, key, progressPaths));
+  }
+
+  const topics = tracker.topics && typeof tracker.topics === "object" && !Array.isArray(tracker.topics)
+    ? tracker.topics as Record<string, unknown>
+    : null;
+  if (topics) {
+    const standardTopicKeys = new Set(["primaryTopic", "emotionalTone", "interactionTheme"]);
+    const extraTopics = Object.fromEntries(
+      Object.entries(topics).filter(([key]) => !standardTopicKeys.has(key)),
+    );
+    appendAdditionalLines(lines, trackerValueToText("topics", extraTopics, 0, "topics", progressPaths));
+  } else {
+    appendAdditionalLines(lines, trackerValueToText("topics", tracker.topics, 0, "topics", progressPaths));
+  }
+
+  if (!Array.isArray(tracker.charactersPresent)) {
+    appendAdditionalLines(lines, trackerValueToText("charactersPresent", tracker.charactersPresent, 0, "charactersPresent", progressPaths));
+  }
+
+  if (!Array.isArray(tracker.characters)) {
+    appendAdditionalLines(lines, trackerValueToText("characters", tracker.characters, 0, "characters", progressPaths));
+  } else {
+    const unrepresentedCharacters = tracker.characters.filter((character) => {
+      if (!character || typeof character !== "object" || Array.isArray(character)) return true;
+      return renderCharacterSummary(character as Record<string, unknown>, progressPaths).length === 0;
+    });
+    appendAdditionalLines(lines, trackerValueToText("characters", unrepresentedCharacters, 0, "characters", progressPaths));
+  }
+
+  return lines;
+}
+
+function appendAdditionalLines(lines: string[], child: string[]) {
+  if (child.length === 0) return;
+  if (lines.length > 0) lines.push("");
+  lines.push(...child);
 }
 
 function renderSceneMapSummary(tracker: Record<string, unknown>, progressPaths: Set<string>): string[] {

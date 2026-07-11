@@ -3,6 +3,17 @@
   "version": "1.0.1",
   "type": "module",
   "scripts": {
-    "build": "bun build src/backend.ts --target bun --outfile dist/backend.js && bun build src/frontend.ts --target browser --outfile dist/frontend.js"
+    "build": "bun build src/backend.ts --target bun --outfile dist/backend.js && bun build src/frontend.ts --target browser --outfile dist/frontend.js",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.10",
+    "lumiverse-spindle-types": "0.5.30",
+    "typescript": "^6.0.2"
   }
 }

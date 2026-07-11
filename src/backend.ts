@@ -6,14 +6,17 @@ import {
   getPresetLayout,
   getPresetPrompt,
   mergeSettings,
-  parseModelJson,
   renderPrompt,
-  schemaToExample,
   trackerToText,
   type SceneMapSettings,
   type SceneMapState,
   type TrackerEntry,
 } from "./shared";
+import { createValidatedSchemaExample, parseAndValidateModelJson, validateTrackerData } from "./schema-validator";
+import { GenerationRegistry } from "./generation-registry";
+import { mergeTrackerMetadata } from "./tracker-metadata";
+import { KeyedAsyncQueue } from "./keyed-async-queue";
+import { captureSwipeSnapshot, swipeSnapshotMatches } from "./swipe-snapshot";
 
 declare const spindle: import("lumiverse-spindle-types").SpindleAPI;
 
@@ -23,6 +26,7 @@ type ChatMessage = {
   content: string;
   swipe_id?: number;
   swipes?: string[];
+  swipe_dates?: number[];
   metadata?: Record<string, unknown>;
 };
 
@@ -57,14 +61,22 @@ type ConnectionSummary = {
   is_default?: boolean;
 };
 
-type ActiveGeneration = {
-  messageId: string;
-  userId: string;
-  controller: AbortController;
+const activeGenerations = new GenerationRegistry();
+const statePushQueue = new KeyedAsyncQueue();
+const macroLayoutsByChatId = new Map<string, ReturnType<typeof getPresetLayout>>();
+const alternateCharacterFields = ["description", "personality", "scenario"] as const;
+
+type SceneMapMacroContext = {
+  env?: {
+    chat?: {
+      id?: unknown;
+    };
+  };
 };
 
-const activeGenerations = new Map<string, ActiveGeneration>();
-const alternateCharacterFields = ["description", "personality", "scenario"] as const;
+type PullMacroDefinition = Omit<import("lumiverse-spindle-types").MacroDefinitionDTO, "handler"> & {
+  handler: (context: SceneMapMacroContext) => string | Promise<string>;
+};
 
 async function loadSettings(userId?: string): Promise<SceneMapSettings> {
   return mergeSettings(
@@ -83,15 +95,8 @@ function getActiveSwipeId(message: ChatMessage | null | undefined): number {
   return typeof message?.swipe_id === "number" && Number.isFinite(message.swipe_id) ? message.swipe_id : 0;
 }
 
-function generationKey(userId: string, messageId: string): string {
-  return `${userId}:${messageId}`;
-}
-
 function getActiveGenerationMessageId(userId: string): string | null {
-  for (const generation of activeGenerations.values()) {
-    if (generation.userId === userId) return generation.messageId;
-  }
-  return null;
+  return activeGenerations.getMessageId(userId);
 }
 
 function getTrackerStore(message: ChatMessage | null | undefined): Record<string, unknown> | null {
@@ -119,31 +124,6 @@ function getTrackerFromStore(store: Record<string, unknown> | null, swipeId: num
 
 function getMessageTracker(message: ChatMessage | null | undefined): unknown | null {
   return getTrackerFromStore(getTrackerStore(message), getActiveSwipeId(message));
-}
-
-function withTrackerMetadata(message: ChatMessage, data: unknown): Record<string, unknown> {
-  const now = new Date().toISOString();
-  const swipeId = getActiveSwipeId(message);
-  const existing = getTrackerStore(message);
-  const swipes = existing?.swipes && typeof existing.swipes === "object" && !Array.isArray(existing.swipes)
-    ? { ...(existing.swipes as Record<string, unknown>) }
-    : {};
-  if (existing && "value" in existing) {
-    const legacySwipeId = typeof existing.swipeId === "number" ? existing.swipeId : swipeId;
-    swipes[String(legacySwipeId)] ??= {
-      value: existing.value,
-      updatedAt: typeof existing.updatedAt === "string" ? existing.updatedAt : now,
-    };
-  }
-  swipes[String(swipeId)] = { value: data, updatedAt: now };
-  return {
-    ...(message.metadata ?? {}),
-    [MESSAGE_METADATA_KEY]: {
-      version: 2,
-      swipes,
-      updatedAt: now,
-    },
-  };
 }
 
 function withoutTrackerMetadata(message: ChatMessage): Record<string, unknown> {
@@ -198,8 +178,7 @@ function countAssistantMessagesBetween(messages: ChatMessage[], afterMessageId: 
     .length;
 }
 
-function findTargetMessage(messages: ChatMessage[], messageId?: string | null): ChatMessage | null {
-  if (messageId) return messages.find((message) => message.id === messageId) ?? null;
+function findLatestAssistantMessage(messages: ChatMessage[]): ChatMessage | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i].role === "assistant") return messages[i];
   }
@@ -215,16 +194,13 @@ function getAutoGenerateMessagesRemaining(settings: SceneMapSettings, messages: 
   return Math.max(0, interval - messagesDue);
 }
 
-function getPreviousTrackerJson(messages: ChatMessage[], currentMessageId: string, skipCurrent: boolean): string {
-  let skippedCurrent = !skipCurrent;
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
+function getTrackerBeforeTargetJson(messages: ChatMessage[], targetId: string): string {
+  const targetIndex = messages.findIndex((message) => message.id === targetId);
+  if (targetIndex <= 0) return "{}";
+  for (let i = targetIndex - 1; i >= 0; i -= 1) {
     const message = messages[i];
     const tracker = getMessageTracker(message);
     if (!tracker) continue;
-    if (!skippedCurrent && message.id === currentMessageId) {
-      skippedCurrent = true;
-      continue;
-    }
     return JSON.stringify(tracker, null, 2);
   }
   return "{}";
@@ -452,8 +428,9 @@ async function resolveDisplayText(text: string, context: { chatId: string; chara
 async function buildState(userId: string): Promise<SceneMapState> {
   const settings = await loadSettings(userId);
   const { chat, messages } = await getActiveContext(userId);
+  const effectivePresetKey = getChatPresetKey(chat, settings);
   const latest = getLatestTrackerEntry(messages);
-  const activeMessage = findTargetMessage(messages);
+  const activeMessage = findLatestAssistantMessage(messages);
   if (latest && chat) {
     latest.displayData = await resolveTrackerDisplayData(latest.data, {
       chatId: chat.id,
@@ -464,6 +441,7 @@ async function buildState(userId: string): Promise<SceneMapState> {
   return {
     settings,
     chatId: chat?.id ?? null,
+    effectivePresetKey,
     latest,
     messagesBehind: latest ? countAssistantMessagesAfter(messages, latest.messageId) : 0,
     autoGenerateMessagesRemaining: getAutoGenerateMessagesRemaining(settings, messages, latest, activeMessage),
@@ -474,17 +452,28 @@ async function buildState(userId: string): Promise<SceneMapState> {
   };
 }
 
-async function pushState(userId: string) {
-  const state = await buildState(userId);
-  const { chat } = await getActiveContext(userId);
-  const presetKey = getChatPresetKey(chat, state.settings);
-  const layout = getPresetLayout(state.settings, presetKey);
-  spindle.sendToFrontend({ type: "state", state }, userId);
-  spindle.updateMacroValue("scenemap", trackerToText(state.latest?.displayData ?? state.latest?.data ?? null, layout));
+function pushState(userId: string, response: Record<string, unknown> = {}): Promise<void> {
+  return statePushQueue.enqueue(userId, async () => {
+    const state = await buildState(userId);
+    if (state.chatId) {
+      macroLayoutsByChatId.set(state.chatId, getPresetLayout(state.settings, state.effectivePresetKey));
+    }
+    spindle.sendToFrontend({ type: "state", state, ...response }, userId);
+  });
 }
 
-async function refreshMacroValue() {
-  spindle.updateMacroValue("scenemap", "");
+async function resolveSceneMapMacro(context: SceneMapMacroContext): Promise<string> {
+  const chatId = context.env?.chat?.id;
+  if (typeof chatId !== "string" || !chatId) return "";
+  try {
+    const messages = (await spindle.chat.getMessages(chatId)) as ChatMessage[];
+    const latest = getLatestTrackerEntry(messages);
+    if (!latest) return "";
+    return trackerToText(latest.data, macroLayoutsByChatId.get(chatId));
+  } catch (error) {
+    spindle.log.warn(`SceneMap macro resolution failed: ${(error as Error).message}`);
+    return "";
+  }
 }
 
 async function updateChatPreset(chatId: string, presetKey: string, userId: string) {
@@ -507,36 +496,52 @@ function getChatPresetKey(chat: { metadata?: Record<string, unknown> } | null, s
   return typeof key === "string" && settings.schemaPresets[key] ? key : settings.schemaPreset;
 }
 
-async function generateTracker(messageId: string | null | undefined, userId?: string) {
-  if (!userId) throw new Error("SceneMap needs a user context before generating a tracker.");
-  const { chat, messages } = await getActiveContext(userId);
-  if (!chat) throw new Error("Open a chat before generating a SceneMap tracker.");
+function removeLegacyExampleSection(template: string): string {
+  return template.replace(
+    /EXAMPLE OF A PERFECT RESPONSE:\s*```json\s*\{\{\s*example_response\s*\}\}\s*```/gi,
+    "",
+  );
+}
 
-  const target = findTargetMessage(messages, messageId);
-  if (!target) throw new Error("No assistant message found for SceneMap.");
-  if (target.role !== "assistant") throw new Error("SceneMap can only track assistant messages.");
-  const activeKey = generationKey(userId, target.id);
-  const activeGeneration = activeGenerations.get(activeKey);
-  if (activeGeneration) {
-    activeGeneration.controller.abort();
-    activeGenerations.delete(activeKey);
-    if (userId) await pushState(userId);
+async function generateTracker(userId?: string, expectedLatestMessageId?: string) {
+  if (!userId) throw new Error("SceneMap needs a user context before generating a tracker.");
+  const activeMessageId = getActiveGenerationMessageId(userId);
+  if (activeMessageId) {
+    const activeGeneration = activeGenerations.get(userId, activeMessageId);
+    if (activeGeneration) activeGenerations.cancel(activeGeneration);
     spindle.toast.info("SceneMap generation cancelled.", { userId });
     return;
   }
-  const activeMessageId = getActiveGenerationMessageId(userId);
-  if (activeMessageId && activeMessageId !== target.id) {
-    throw new Error("SceneMap is already mapping another message.");
+
+  const { chat, messages } = await getActiveContext(userId);
+  if (!chat) throw new Error("Open a chat before generating a SceneMap tracker.");
+
+  const target = findLatestAssistantMessage(messages);
+  if (!target) throw new Error("No assistant message found for SceneMap.");
+  if (expectedLatestMessageId && target.id !== expectedLatestMessageId) {
+    await pushState(userId);
+    return;
   }
+  const targetSwipeId = getActiveSwipeId(target);
+  const targetSwipeSnapshot = captureSwipeSnapshot(target, targetSwipeId);
+  if (!targetSwipeSnapshot) throw new Error("SceneMap could not read the target swipe.");
 
   const settings = await loadSettings(userId);
   const presetKey = getChatPresetKey(chat, settings);
   const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
-  const previousTracker = getPreviousTrackerJson(messages, target.id, !!getMessageTracker(target));
-  const finalPrompt = renderPrompt(getPresetPrompt(settings, presetKey), {
+  const previousTracker = getTrackerBeforeTargetJson(messages, target.id);
+  const schemaExample = createValidatedSchemaExample(preset.value);
+  const exampleResponse = schemaExample === null ? "" : JSON.stringify(schemaExample, null, 2);
+  const exampleSection = schemaExample === null
+    ? ""
+    : `EXAMPLE OF A PERFECT RESPONSE:\n\`\`\`json\n${exampleResponse}\n\`\`\``;
+  const rawPromptTemplate = getPresetPrompt(settings, presetKey);
+  const promptTemplate = schemaExample === null ? removeLegacyExampleSection(rawPromptTemplate) : rawPromptTemplate;
+  const finalPrompt = renderPrompt(promptTemplate, {
     schema: JSON.stringify(preset.value, null, 2),
     previous_tracker: previousTracker,
-    example_response: JSON.stringify(schemaToExample(preset.value), null, 2),
+    example_response: exampleResponse,
+    example_section: exampleSection,
   });
   const context = { chatId: chat.id, characterId: chat.character_id, userId };
   const promptMessages = await resolvePromptMessages(trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages), context);
@@ -545,8 +550,8 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
   promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
 
   const controller = new AbortController();
-  activeGenerations.set(activeKey, { messageId: target.id, userId, controller });
-  if (userId) await pushState(userId);
+  const generation = activeGenerations.start(userId, target.id, controller);
+  await pushState(userId);
   spindle.toast.info("Mapping this scene...", { title: "SceneMap", userId });
 
   try {
@@ -559,20 +564,24 @@ async function generateTracker(messageId: string | null | undefined, userId?: st
       },
       signal: controller.signal,
     });
-    const parsed = parseModelJson(result.content);
+    const parsed = parseAndValidateModelJson(result.content, preset.value);
+    const currentMessages = (await spindle.chat.getMessages(chat.id)) as ChatMessage[];
+    const currentTarget = currentMessages.find((message) => message.id === target.id);
+    if (!currentTarget) throw new Error("SceneMap target message was deleted during generation.");
+    if (!swipeSnapshotMatches(targetSwipeSnapshot, currentTarget, targetSwipeId)) {
+      throw new Error("SceneMap target swipe changed during generation. Generate the tracker again.");
+    }
     await spindle.chat.updateMessage(chat.id, target.id, {
-      metadata: withTrackerMetadata(target, parsed),
+      metadata: mergeTrackerMetadata(currentTarget.metadata, parsed, targetSwipeId),
     });
     spindle.toast.success("Tracker updated.", { title: "SceneMap", userId });
   } catch (error) {
     if ((error as Error).name !== "AbortError") {
-      spindle.toast.error((error as Error).message, { title: "SceneMap generation failed", duration: 10000, userId });
       throw error;
     }
   } finally {
-    activeGenerations.delete(activeKey);
-    if (userId) await pushState(userId);
-    else await refreshMacroValue();
+    activeGenerations.finish(generation);
+    await pushState(userId);
   }
 }
 
@@ -585,8 +594,8 @@ async function maybeAutoGenerateTracker(messageId: string | null | undefined, us
 
   const interval = Math.max(1, Math.floor(settings.autoGenerateInterval || 1));
   const { messages } = await getActiveContext(userId);
-  const target = findTargetMessage(messages, messageId);
-  if (!target || target.role !== "assistant") {
+  const target = findLatestAssistantMessage(messages);
+  if (!target || target.id !== messageId) {
     await pushState(userId);
     return;
   }
@@ -595,8 +604,7 @@ async function maybeAutoGenerateTracker(messageId: string | null | undefined, us
     return;
   }
 
-  const activeKey = generationKey(userId, target.id);
-  if (activeGenerations.has(activeKey)) {
+  if (getActiveGenerationMessageId(userId)) {
     await pushState(userId);
     return;
   }
@@ -604,25 +612,33 @@ async function maybeAutoGenerateTracker(messageId: string | null | undefined, us
   const latest = getLatestTrackerEntry(messages);
   const messagesDue = countAssistantMessagesBetween(messages, latest?.messageId ?? null, target.id);
   if (messagesDue >= interval) {
-    await generateTracker(target.id, userId);
+    await generateTracker(userId, target.id);
   } else {
     await pushState(userId);
   }
 }
 
-async function editTracker(messageId: string, data: unknown, userId?: string) {
+async function editTracker(chatId: string, messageId: string, swipeId: number, data: unknown, userId?: string) {
   if (!userId) throw new Error("SceneMap needs a user context before editing a tracker.");
-  const { chat, messages } = await getActiveContext(userId);
-  if (!chat) throw new Error("Open a chat before editing a tracker.");
+  if (!chatId) throw new Error("Tracker chat is missing.");
+  const chat = await spindle.chats.get(chatId, userId);
+  if (!chat) throw new Error("Tracker chat was not found.");
+  if (!Number.isInteger(swipeId) || swipeId < 0) throw new Error("Tracker swipe is invalid.");
+  const messages = (await spindle.chat.getMessages(chatId)) as ChatMessage[];
   const message = messages.find((item) => item.id === messageId);
   if (!message) throw new Error("Message not found.");
-  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Tracker data must be a JSON object.");
-  await spindle.chat.updateMessage(chat.id, messageId, {
-    metadata: withTrackerMetadata(message, data),
+  if (Array.isArray(message.swipes) && swipeId >= message.swipes.length) {
+    throw new Error("Tracker swipe was removed while the editor was open.");
+  }
+  const settings = await loadSettings(userId);
+  const presetKey = getChatPresetKey(chat, settings);
+  const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  const validatedData = validateTrackerData(data, preset.value);
+  await spindle.chat.updateMessage(chatId, messageId, {
+    metadata: mergeTrackerMetadata(message.metadata, validatedData, swipeId),
   });
   spindle.toast.success("Tracker saved.", { title: "SceneMap", userId });
-  if (userId) await pushState(userId);
-  else await refreshMacroValue();
+  await pushState(userId);
 }
 
 async function deleteTracker(messageId: string, userId?: string) {
@@ -639,20 +655,24 @@ async function deleteTracker(messageId: string, userId?: string) {
     userId,
   });
   if (!confirmed) return;
+  const currentMessages = (await spindle.chat.getMessages(chat.id)) as ChatMessage[];
+  const currentMessage = currentMessages.find((item) => item.id === messageId);
+  if (!currentMessage) throw new Error("Message was deleted before its tracker could be removed.");
   await spindle.chat.updateMessage(chat.id, messageId, {
-    metadata: withoutTrackerMetadata(message),
+    metadata: withoutTrackerMetadata(currentMessage),
   });
   spindle.toast.success("Tracker deleted.", { title: "SceneMap", userId });
-  if (userId) await pushState(userId);
-  else await refreshMacroValue();
+  await pushState(userId);
 }
 
-spindle.registerMacro({
+const registerPullMacro = spindle.registerMacro as unknown as (definition: PullMacroDefinition) => void;
+registerPullMacro({
   name: "scenemap",
   category: "extension:scenemap",
   description: "Latest SceneMap state formatted as plain text for prompts.",
   returnType: "string",
-  handler: "",
+  handler: resolveSceneMapMacro,
+  volatile: true,
 });
 
 spindle.onFrontendMessage(async (payload: any, userId?: string) => {
@@ -664,7 +684,9 @@ spindle.onFrontendMessage(async (payload: any, userId?: string) => {
         break;
       case "save_settings":
         await saveSettings(payload.settings, userId);
-        await pushState(userId);
+        await pushState(userId, {
+          settingsSaveRequestId: typeof payload.requestId === "string" ? payload.requestId : "",
+        });
         spindle.toast.success("Settings saved.", { title: "SceneMap", userId });
         break;
       case "set_chat_preset": {
@@ -676,13 +698,13 @@ spindle.onFrontendMessage(async (payload: any, userId?: string) => {
         break;
       }
       case "generate_tracker":
-        await generateTracker(payload.messageId ?? null, userId);
+        await generateTracker(userId);
         break;
       case "maybe_auto_generate":
         await maybeAutoGenerateTracker(payload.messageId ?? null, userId);
         break;
       case "edit_tracker":
-        await editTracker(payload.messageId, payload.data, userId);
+        await editTracker(payload.chatId, payload.messageId, payload.swipeId, payload.data, userId);
         break;
       case "delete_tracker":
         await deleteTracker(payload.messageId, userId);
@@ -704,8 +726,17 @@ spindle.onFrontendMessage(async (payload: any, userId?: string) => {
       }
     }
   } catch (error) {
-    spindle.sendToFrontend({ type: "error", message: (error as Error).message }, userId);
-    spindle.toast.error((error as Error).message, { title: "SceneMap", duration: 9000, userId });
+    const isGenerationRequest = payload?.type === "generate_tracker" || payload?.type === "maybe_auto_generate";
+    spindle.sendToFrontend({
+      type: "error",
+      message: (error as Error).message,
+      requestId: typeof payload?.requestId === "string" ? payload.requestId : undefined,
+    }, userId);
+    spindle.toast.error((error as Error).message, {
+      title: isGenerationRequest ? "SceneMap generation failed" : "SceneMap",
+      duration: isGenerationRequest ? 10000 : 9000,
+      userId,
+    });
   }
 });
 
@@ -718,5 +749,4 @@ spindle.on("GENERATION_ENDED", (payload: any) => {
   spindle.log.warn("SceneMap auto-generation skipped: generation event does not include a frontend user context.");
 });
 
-void refreshMacroValue();
 spindle.log.info("SceneMap loaded.");
