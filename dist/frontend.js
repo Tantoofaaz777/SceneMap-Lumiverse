@@ -266,6 +266,7 @@ var isRefreshingState = false;
 var isGenerationRequestPending = false;
 var editorRequestSeq = 0;
 var settingsSaveRequestSeq = 0;
+var drawerSelectHandles = [];
 var pendingTextEditors = new Map;
 var settingsDraft = new SettingsDraftTracker;
 var iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
@@ -344,6 +345,8 @@ function setup(ctx) {
     offBackend();
     for (const off of offEvents)
       off();
+    destroySelectHandles(drawerSelectHandles);
+    drawerSelectHandles = [];
     tab.destroy();
     removeStyle();
     ctx.dom.cleanup();
@@ -397,6 +400,8 @@ function renderChatToolbar() {
 function renderDrawer() {
   if (!rootRef)
     return;
+  destroySelectHandles(drawerSelectHandles);
+  drawerSelectHandles = [];
   if (drawerView === "settings") {
     renderDrawerSettings();
     return;
@@ -444,10 +449,7 @@ function renderDrawerSettings() {
           <h3>Generation</h3>
       <label>
         <span>Connection</span>
-        <select data-setting="connectionId">
-          <option value="">Default active connection</option>
-          ${state.connections.map((conn) => `<option value="${escapeAttr(conn.id)}" ${settings.connectionId === conn.id ? "selected" : ""}>${escapeHtml(conn.name)} (${escapeHtml(conn.model || conn.provider)})${conn.is_default ? " - default" : ""}</option>`).join("")}
-        </select>
+        <div class="scenemap-native-select" data-native-setting="connectionId"></div>
       </label>
       <div class="scenemap-auto-row">
         <label class="scenemap-switch-row">
@@ -476,10 +478,7 @@ function renderDrawerSettings() {
       </div>
       <label>
         <span>Include last messages</span>
-        <select data-setting="includeLastXMessages">
-          <option value="0" ${settings.includeLastXMessages === 0 ? "selected" : ""}>All messages up to target</option>
-          ${Array.from({ length: 20 }, (_, i) => i + 1).map((count) => `<option value="${count}" ${settings.includeLastXMessages === count ? "selected" : ""}>Last ${count}</option>`).join("")}
-        </select>
+        <div class="scenemap-native-select" data-native-setting="includeLastXMessages"></div>
       </label>
         </div>
         <div class="scenemap-settings-group">
@@ -494,9 +493,7 @@ function renderDrawerSettings() {
           <h3>Presets</h3>
         <label>
           <span>Global preset</span>
-          <select data-setting="schemaPreset">
-            ${Object.entries(settings.schemaPresets).map(([key, preset]) => `<option value="${escapeAttr(key)}" ${settings.schemaPreset === key ? "selected" : ""}>${escapeHtml(preset.name)}</option>`).join("")}
-          </select>
+          <div class="scenemap-native-select" data-native-setting="schemaPreset"></div>
         </label>
           <div class="scenemap-settings-preset-actions">
             <button class="scenemap-pill-action" data-action="create-preset">New</button>
@@ -520,6 +517,53 @@ function renderDrawerSettings() {
       </footer>
     </div>
   `;
+  mountSettingsSelects(settings);
+}
+function mountSettingsSelects(settings) {
+  if (!ctxRef || !rootRef)
+    return;
+  const mount = (key, options, value, extra = {}) => {
+    const target = rootRef?.querySelector(`[data-native-setting="${key}"]`);
+    if (!target || !ctxRef)
+      return;
+    drawerSelectHandles.push(ctxRef.components.mountSelect(target, {
+      options,
+      value,
+      portal: true,
+      ariaLabel: key === "connectionId" ? "Connection" : key === "schemaPreset" ? "Global preset" : "Include last messages",
+      onChange: (nextValue) => updateNativeSetting(key, nextValue),
+      ...extra
+    }));
+  };
+  mount("connectionId", state.connections.map((connection) => ({
+    value: connection.id,
+    label: connection.name,
+    sublabel: `${connection.model || connection.provider}${connection.is_default ? " · default" : ""}`
+  })), settings.connectionId, {
+    placeholder: "Default active connection",
+    clearable: true,
+    clearLabel: "Default active connection",
+    searchPlaceholder: "Search connections..."
+  });
+  mount("includeLastXMessages", [
+    { value: "0", label: "All messages up to target" },
+    ...Array.from({ length: 20 }, (_, index) => ({ value: String(index + 1), label: `Last ${index + 1}` }))
+  ], String(settings.includeLastXMessages), { searchPlaceholder: "Search message count..." });
+  mount("schemaPreset", Object.entries(settings.schemaPresets).map(([key, preset]) => ({ value: key, label: preset.name })), settings.schemaPreset, { searchPlaceholder: "Search presets..." });
+}
+function updateNativeSetting(key, value) {
+  const settings = mergeSettings(state.settings);
+  if (key === "includeLastXMessages")
+    settings.includeLastXMessages = Math.max(0, Math.floor(Number(value) || 0));
+  else
+    settings[key] = value;
+  updateSettingsDraft(settings);
+  if (key === "schemaPreset")
+    queueMicrotask(() => render());
+}
+function destroySelectHandles(handles) {
+  for (const handle of handles)
+    handle.destroy();
 }
 function statusText() {
   if (!state.chatId)
@@ -893,14 +937,22 @@ function editLayout() {
   if (!ctx)
     return;
   const modal = ctx.ui.showModal({ title: "SceneMap Layout", width: 860, maxHeight: 760 });
+  let layoutSelectHandles = [];
   const draw = (preserveScroll = true) => {
     const scroller = modal.root.querySelector(".scenemap-layout-sections");
     const scrollTop = preserveScroll ? scroller?.scrollTop ?? 0 : 0;
+    destroySelectHandles(layoutSelectHandles);
+    layoutSelectHandles = [];
     modal.root.innerHTML = renderLayoutEditor(workingLayout, fieldOptions);
     const nextScroller = modal.root.querySelector(".scenemap-layout-sections");
     if (nextScroller)
       nextScroller.scrollTop = scrollTop;
+    layoutSelectHandles = mountLayoutSelects(modal.root, workingLayout, fieldOptions, draw);
   };
+  modal.onDismiss(() => {
+    destroySelectHandles(layoutSelectHandles);
+    layoutSelectHandles = [];
+  });
   draw(false);
   modal.root.addEventListener("input", (event) => {
     const target = event.target;
@@ -927,38 +979,8 @@ function editLayout() {
     if (sectionIndex === null || fieldIndex === null)
       return;
     const field = workingLayout.sections[sectionIndex].fields[fieldIndex];
-    if (target.dataset.layoutInput === "field-path") {
-      const option = findFieldOption(fieldOptions, target.value);
-      field.path = target.value;
-      field.label = option?.label ?? humanizeTrackerKey(target.value.split(".").pop() || target.value);
-      field.display = option?.display ?? "text";
-      field.fields = option?.children?.slice(0, 4).map((child) => ({
-        path: child.path,
-        label: child.label,
-        display: child.display === "character_cards" ? "text" : child.display
-      }));
-      draw();
-    }
-    if (target.dataset.layoutInput === "field-display") {
-      field.display = target.value;
-      draw();
-    }
     if (target.dataset.layoutInput === "field-center") {
       field.center = target.checked;
-    }
-    if (target.dataset.layoutInput === "child-path" && childIndex !== null) {
-      const parentOption = findFieldOption(fieldOptions, field.path);
-      const option = parentOption?.children?.find((child) => child.path === target.value);
-      if (field.fields?.[childIndex]) {
-        field.fields[childIndex].path = target.value;
-        field.fields[childIndex].label = option?.label ?? humanizeTrackerKey(target.value.split(".").pop() || target.value);
-        field.fields[childIndex].display = option?.display === "character_cards" ? "text" : option?.display ?? "text";
-      }
-      draw();
-    }
-    if (target.dataset.layoutInput === "child-display" && childIndex !== null && field.fields?.[childIndex]) {
-      field.fields[childIndex].display = target.value;
-      draw();
     }
     if (target.dataset.layoutInput === "child-center" && childIndex !== null && field.fields?.[childIndex]) {
       field.fields[childIndex].center = target.checked;
@@ -1077,18 +1099,13 @@ function renderLayoutSection(section, sectionIndex, layout, options) {
 }
 function renderLayoutField(field, sectionIndex, fieldIndex, layout, options) {
   const option = findFieldOption(options, field.path);
-  const selectOptions = getAvailableFieldOptions(layout, options, field.path).map((item) => `<option value="${escapeAttr(item.path)}" ${item.path === field.path ? "selected" : ""}>${escapeHtml(item.label)} (${escapeHtml(item.path)})</option>`).join("");
   const childEditor = field.display === "character_cards" ? renderChildFieldEditor(field, option?.children ?? [], sectionIndex, fieldIndex) : "";
   return `
     <article class="scenemap-layout-field">
       <div class="scenemap-layout-field-row">
-        <select aria-label="Field" data-layout-input="field-path" data-section="${sectionIndex}" data-field="${fieldIndex}">
-          ${selectOptions}
-        </select>
+        <div class="scenemap-native-select" data-layout-select="field-path" data-section="${sectionIndex}" data-field="${fieldIndex}"></div>
         <input aria-label="Label" data-layout-input="field-label" data-section="${sectionIndex}" data-field="${fieldIndex}" value="${escapeAttr(field.label ?? option?.label ?? "")}" placeholder="Label">
-        <select aria-label="Display" data-layout-input="field-display" data-section="${sectionIndex}" data-field="${fieldIndex}">
-          ${renderDisplayOptions(field.display ?? option?.display ?? "text", !!option?.children?.length)}
-        </select>
+        <div class="scenemap-native-select" data-layout-select="field-display" data-section="${sectionIndex}" data-field="${fieldIndex}"></div>
         ${iconButton("move-field-up", "Move up", "up", { section: sectionIndex, field: fieldIndex, disabled: fieldIndex === 0 })}
         ${iconButton("move-field-down", "Move down", "down", { section: sectionIndex, field: fieldIndex, disabled: fieldIndex >= layout.sections[sectionIndex].fields.length - 1 })}
         ${iconButton("remove-field", "Remove field", "trash", { section: sectionIndex, field: fieldIndex })}
@@ -1112,16 +1129,11 @@ function renderChildFieldEditor(field, options, sectionIndex, fieldIndex) {
   `;
 }
 function renderChildField(parent, child, childIndex, childCount, options, sectionIndex, fieldIndex) {
-  const selectOptions = getAvailableChildOptions(parent, options, child.path).map((item) => `<option value="${escapeAttr(item.path)}" ${item.path === child.path ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("");
   return `
     <div class="scenemap-layout-child-row">
-      <select data-layout-input="child-path" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}">
-        ${selectOptions}
-      </select>
+      <div class="scenemap-native-select" data-layout-select="child-path" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>
       <input data-layout-input="child-label" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}" value="${escapeAttr(child.label ?? "")}" placeholder="Label">
-      <select data-layout-input="child-display" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}">
-        ${renderDisplayOptions(child.display ?? "text", false)}
-      </select>
+      <div class="scenemap-native-select" data-layout-select="child-display" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>
       ${iconButton("move-child-up", "Move up", "up", { section: sectionIndex, field: fieldIndex, child: childIndex, disabled: childIndex === 0 })}
       ${iconButton("move-child-down", "Move down", "down", { section: sectionIndex, field: fieldIndex, child: childIndex, disabled: childIndex >= childCount - 1 })}
       ${iconButton("remove-child", "Remove card field", "trash", { section: sectionIndex, field: fieldIndex, child: childIndex })}
@@ -1146,7 +1158,7 @@ function renderChipCenterToggle(input, checked, indexes, visible) {
     </label>
   `;
 }
-function renderDisplayOptions(selected, allowCards) {
+function getDisplayOptions(allowCards) {
   const displays = [
     { value: "text", label: "Text" },
     { value: "subtle", label: "Subtle" },
@@ -1156,7 +1168,98 @@ function renderDisplayOptions(selected, allowCards) {
   ];
   if (allowCards)
     displays.push({ value: "character_cards", label: "Cards" });
-  return displays.map((display) => `<option value="${display.value}" ${display.value === selected ? "selected" : ""}>${display.label}</option>`).join("");
+  return displays;
+}
+function mountLayoutSelects(root, layout, options, redraw) {
+  const ctx = ctxRef;
+  if (!ctx)
+    return [];
+  const handles = [];
+  for (const target of root.querySelectorAll("[data-layout-select]")) {
+    const kind = target.dataset.layoutSelect;
+    const sectionIndex = readIndex(target.dataset.section);
+    const fieldIndex = readIndex(target.dataset.field);
+    const childIndex = readIndex(target.dataset.child);
+    if (sectionIndex === null || fieldIndex === null)
+      continue;
+    const field = layout.sections[sectionIndex]?.fields[fieldIndex];
+    if (!field)
+      continue;
+    let value = "";
+    let selectOptions = [];
+    let ariaLabel = "Layout option";
+    let searchable = false;
+    if (kind === "field-path") {
+      value = field.path;
+      ariaLabel = "Field";
+      searchable = true;
+      selectOptions = getAvailableFieldOptions(layout, options, field.path).map((option) => ({
+        value: option.path,
+        label: option.label,
+        sublabel: option.path
+      }));
+    } else if (kind === "field-display") {
+      const option = findFieldOption(options, field.path);
+      value = field.display ?? option?.display ?? "text";
+      ariaLabel = "Display";
+      selectOptions = getDisplayOptions(!!option?.children?.length);
+    } else if (kind === "child-path" && childIndex !== null) {
+      const child = field.fields?.[childIndex];
+      if (!child)
+        continue;
+      const parentOption = findFieldOption(options, field.path);
+      value = child.path;
+      ariaLabel = "Card field";
+      searchable = true;
+      selectOptions = getAvailableChildOptions(field, parentOption?.children ?? [], child.path).map((option) => ({
+        value: option.path,
+        label: option.label,
+        sublabel: option.path
+      }));
+    } else if (kind === "child-display" && childIndex !== null) {
+      const child = field.fields?.[childIndex];
+      if (!child)
+        continue;
+      value = child.display ?? "text";
+      ariaLabel = "Card field display";
+      selectOptions = getDisplayOptions(false);
+    } else {
+      continue;
+    }
+    handles.push(ctx.components.mountSelect(target, {
+      options: selectOptions,
+      value,
+      portal: true,
+      ariaLabel,
+      searchThreshold: searchable ? 8 : Number.MAX_SAFE_INTEGER,
+      searchPlaceholder: searchable ? "Search fields..." : undefined,
+      onChange: (nextValue) => {
+        if (kind === "field-path") {
+          const option = findFieldOption(options, nextValue);
+          field.path = nextValue;
+          field.label = option?.label ?? humanizeTrackerKey(nextValue.split(".").pop() || nextValue);
+          field.display = option?.display ?? "text";
+          field.fields = option?.children?.slice(0, 4).map((child) => ({
+            path: child.path,
+            label: child.label,
+            display: child.display === "character_cards" ? "text" : child.display
+          }));
+        } else if (kind === "field-display") {
+          field.display = nextValue;
+        } else if (kind === "child-path" && childIndex !== null && field.fields?.[childIndex]) {
+          const parentOption = findFieldOption(options, field.path);
+          const option = parentOption?.children?.find((child) => child.path === nextValue);
+          field.fields[childIndex].path = nextValue;
+          field.fields[childIndex].label = option?.label ?? humanizeTrackerKey(nextValue.split(".").pop() || nextValue);
+          field.fields[childIndex].display = option?.display === "character_cards" ? "text" : option?.display ?? "text";
+        } else if (kind === "child-display" && childIndex !== null && field.fields?.[childIndex]) {
+          field.fields[childIndex].display = nextValue;
+        }
+        queueMicrotask(() => redraw());
+      }
+    }));
+  }
+  return handles;
 }
 function extractSchemaFieldOptions(schema) {
   const normalized = normalizeSchemaForLayout(schema, schema);
@@ -1603,10 +1706,11 @@ var styles = `
 .scenemap-settings-preset-actions .scenemap-pill-action, .scenemap-settings-actions-left .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; padding: 6px 11px !important; min-height: 32px; }
 .scenemap-settings-save-bar { flex: 0 0 auto; display: flex; justify-content: flex-end; padding-top: 12px; border-top: 1px solid var(--lumiverse-border); }
 .scenemap-settings-save-bar .scenemap-primary { min-width: 130px; }
-.scenemap-settings-shell input:not([type="checkbox"]), .scenemap-settings-shell select, .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-layout-editor select, .scenemap-name-editor input {
+.scenemap-settings-shell input:not([type="checkbox"]), .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-name-editor input {
   width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: 6px;
   background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 7px 9px; font: inherit;
 }
+.scenemap-native-select { width: 100%; min-width: 0; }
 .scenemap-editor { display: flex; flex-direction: column; gap: 10px; }
 .scenemap-name-editor { display: flex; flex-direction: column; gap: 12px; color: var(--lumiverse-text); }
 .scenemap-name-editor label { display: flex; flex-direction: column; gap: 5px; color: var(--lumiverse-text-muted); font-size: 12px; }
@@ -1648,12 +1752,12 @@ var styles = `
 @media (max-width: 760px) {
   .scenemap-layout-section-header { grid-template-columns: 1fr; align-items: stretch; }
   .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: repeat(3, 36px) 1fr; align-items: center; }
-  .scenemap-layout-field-row > select:nth-child(1),
+  .scenemap-layout-field-row > [data-layout-select]:nth-child(1),
   .scenemap-layout-field-row > input:nth-child(2),
-  .scenemap-layout-field-row > select:nth-child(3),
-  .scenemap-layout-child-row > select:nth-child(1),
+  .scenemap-layout-field-row > [data-layout-select]:nth-child(3),
+  .scenemap-layout-child-row > [data-layout-select]:nth-child(1),
   .scenemap-layout-child-row > input:nth-child(2),
-  .scenemap-layout-child-row > select:nth-child(3) { grid-column: 1 / -1; }
+  .scenemap-layout-child-row > [data-layout-select]:nth-child(3) { grid-column: 1 / -1; }
   .scenemap-settings-actions-left { justify-content: flex-start; }
   .scenemap-layout-actions { justify-content: flex-start; }
   .scenemap-layout-intro { align-items: stretch; flex-direction: column; }
