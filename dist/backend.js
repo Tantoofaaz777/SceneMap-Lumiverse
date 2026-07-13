@@ -2051,32 +2051,39 @@ async function buildReferencePromptMessages(chat, userId) {
     characterId: chat.character_id,
     userId
   };
-  const sections = (await Promise.all([
-    buildCharacterReference(chat, userId),
+  const [characterContext, personaReference, activeWorldInfo] = await Promise.all([
+    buildCharacterContext(chat, userId),
     buildPersonaReference(chat, userId),
-    buildActiveWorldInfoReference(chat.id, userId)
-  ])).filter(Boolean);
+    buildActiveWorldInfo(chat.id, userId)
+  ]);
+  const worldInfoReference = separatedReferenceBlock("World Info", [
+    characterContext.scenario,
+    ...activeWorldInfo
+  ]);
+  const sections = [characterContext.reference, personaReference, worldInfoReference].filter(Boolean);
   return Promise.all(sections.map(async (content) => ({
     role: "system",
     content: await resolveDisplayText(content, context)
   })));
 }
-async function buildCharacterReference(chat, userId) {
+async function buildCharacterContext(chat, userId) {
   if (!chat.character_id)
-    return null;
+    return { reference: null, scenario: "" };
   try {
     const character = await spindle.characters.get(chat.character_id, userId);
     if (!character)
-      return null;
+      return { reference: null, scenario: "" };
     const effectiveCharacter = resolveCharacterAlternateFields(character, chat);
-    return separatedReferenceBlock("{{char}}", [
-      compactText(effectiveCharacter.description),
-      compactText(effectiveCharacter.personality),
-      compactText(effectiveCharacter.scenario)
-    ]);
+    return {
+      reference: separatedReferenceBlock("{{char}}", [
+        compactText(effectiveCharacter.description),
+        compactText(effectiveCharacter.personality)
+      ]),
+      scenario: compactText(effectiveCharacter.scenario)
+    };
   } catch (error) {
     spindle.log.warn(`SceneMap could not read character card context: ${error.message}`);
-    return null;
+    return { reference: null, scenario: "" };
   }
 }
 async function buildPersonaReference(chat, userId) {
@@ -2093,22 +2100,19 @@ async function buildPersonaReference(chat, userId) {
     return null;
   }
 }
-async function buildActiveWorldInfoReference(chatId, userId) {
+async function buildActiveWorldInfo(chatId, userId) {
   try {
     const activated = await spindle.world_books.getActivated(chatId, userId);
     if (!activated.length)
-      return null;
+      return [];
     const entries = await Promise.all(activated.map(async (entry) => {
       const fullEntry = await spindle.world_books.entries.get(entry.id, userId);
       return compactText(fullEntry?.content);
     }));
-    const activeEntries = entries.filter(Boolean);
-    if (activeEntries.length === 0)
-      return null;
-    return separatedReferenceBlock("World Info", activeEntries);
+    return entries.filter(Boolean);
   } catch (error) {
     spindle.log.warn(`SceneMap could not read active world info context: ${error.message}`);
-    return null;
+    return [];
   }
 }
 function resolveCharacterAlternateFields(character, chat) {

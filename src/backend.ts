@@ -279,31 +279,38 @@ async function buildReferencePromptMessages(chat: ActiveChat, userId: string): P
     characterId: chat.character_id,
     userId,
   };
-  const sections = (await Promise.all([
-    buildCharacterReference(chat, userId),
+  const [characterContext, personaReference, activeWorldInfo] = await Promise.all([
+    buildCharacterContext(chat, userId),
     buildPersonaReference(chat, userId),
-    buildActiveWorldInfoReference(chat.id, userId),
-  ])).filter(Boolean) as string[];
+    buildActiveWorldInfo(chat.id, userId),
+  ]);
+  const worldInfoReference = separatedReferenceBlock("World Info", [
+    characterContext.scenario,
+    ...activeWorldInfo,
+  ]);
+  const sections = [characterContext.reference, personaReference, worldInfoReference].filter(Boolean) as string[];
   return Promise.all(sections.map(async (content) => ({
     role: "system",
     content: await resolveDisplayText(content, context),
   })));
 }
 
-async function buildCharacterReference(chat: ActiveChat, userId: string): Promise<string | null> {
-  if (!chat.character_id) return null;
+async function buildCharacterContext(chat: ActiveChat, userId: string): Promise<{ reference: string | null; scenario: string }> {
+  if (!chat.character_id) return { reference: null, scenario: "" };
   try {
     const character = await spindle.characters.get(chat.character_id, userId);
-    if (!character) return null;
+    if (!character) return { reference: null, scenario: "" };
     const effectiveCharacter = resolveCharacterAlternateFields(character, chat);
-    return separatedReferenceBlock("{{char}}", [
-      compactText(effectiveCharacter.description),
-      compactText(effectiveCharacter.personality),
-      compactText(effectiveCharacter.scenario),
-    ]);
+    return {
+      reference: separatedReferenceBlock("{{char}}", [
+        compactText(effectiveCharacter.description),
+        compactText(effectiveCharacter.personality),
+      ]),
+      scenario: compactText(effectiveCharacter.scenario),
+    };
   } catch (error) {
     spindle.log.warn(`SceneMap could not read character card context: ${(error as Error).message}`);
-    return null;
+    return { reference: null, scenario: "" };
   }
 }
 
@@ -321,20 +328,18 @@ async function buildPersonaReference(chat: ActiveChat, userId: string): Promise<
   }
 }
 
-async function buildActiveWorldInfoReference(chatId: string, userId: string): Promise<string | null> {
+async function buildActiveWorldInfo(chatId: string, userId: string): Promise<string[]> {
   try {
     const activated = await spindle.world_books.getActivated(chatId, userId);
-    if (!activated.length) return null;
+    if (!activated.length) return [];
     const entries = await Promise.all(activated.map(async (entry: any) => {
       const fullEntry = await spindle.world_books.entries.get(entry.id, userId);
       return compactText(fullEntry?.content);
     }));
-    const activeEntries = entries.filter(Boolean);
-    if (activeEntries.length === 0) return null;
-    return separatedReferenceBlock("World Info", activeEntries);
+    return entries.filter(Boolean);
   } catch (error) {
     spindle.log.warn(`SceneMap could not read active world info context: ${(error as Error).message}`);
-    return null;
+    return [];
   }
 }
 
