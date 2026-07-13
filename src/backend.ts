@@ -20,6 +20,7 @@ import { GenerationRegistry } from "./generation-registry";
 import { mergeTrackerMetadata } from "./tracker-metadata";
 import { KeyedAsyncQueue } from "./keyed-async-queue";
 import { captureSwipeSnapshot, swipeSnapshotMatches } from "./swipe-snapshot";
+import { resolveMessageCharacterId } from "./group-character-context";
 
 declare const spindle: import("lumiverse-spindle-types").SpindleAPI;
 
@@ -31,6 +32,7 @@ type ChatMessage = {
   swipes?: string[];
   swipe_dates?: number[];
   metadata?: Record<string, unknown>;
+  extra?: Record<string, unknown>;
 };
 
 type PromptMessage = Pick<ChatMessage, "role" | "content">;
@@ -273,15 +275,19 @@ async function resolveTrackerDisplayData(value: unknown, context: { chatId: stri
   return Object.fromEntries(entries);
 }
 
-async function buildReferencePromptMessages(chat: ActiveChat, userId: string): Promise<PromptMessage[]> {
+async function buildReferencePromptMessages(
+  chat: ActiveChat,
+  userId: string,
+  characterId: string | null,
+): Promise<PromptMessage[]> {
   const context: ReferenceContext = {
     chatId: chat.id,
-    characterId: chat.character_id,
+    characterId,
     userId,
   };
   const [characterContext, personaReference, activeWorldInfo] = await Promise.all([
-    buildCharacterContext(chat, userId),
-    buildPersonaReference(chat, userId),
+    buildCharacterContext(chat, userId, characterId),
+    buildPersonaReference(chat, userId, characterId),
     buildActiveWorldInfo(chat.id, userId),
   ]);
   const worldInfoReference = separatedReferenceBlock("World Info", [
@@ -295,10 +301,14 @@ async function buildReferencePromptMessages(chat: ActiveChat, userId: string): P
   })));
 }
 
-async function buildCharacterContext(chat: ActiveChat, userId: string): Promise<{ reference: string | null; scenario: string }> {
-  if (!chat.character_id) return { reference: null, scenario: "" };
+async function buildCharacterContext(
+  chat: ActiveChat,
+  userId: string,
+  characterId: string | null,
+): Promise<{ reference: string | null; scenario: string }> {
+  if (!characterId) return { reference: null, scenario: "" };
   try {
-    const character = await spindle.characters.get(chat.character_id, userId);
+    const character = await spindle.characters.get(characterId, userId);
     if (!character) return { reference: null, scenario: "" };
     const effectiveCharacter = resolveCharacterAlternateFields(character, chat);
     return {
@@ -314,11 +324,15 @@ async function buildCharacterContext(chat: ActiveChat, userId: string): Promise<
   }
 }
 
-async function buildPersonaReference(chat: ActiveChat, userId: string): Promise<string | null> {
+async function buildPersonaReference(
+  chat: ActiveChat,
+  userId: string,
+  characterId: string | null,
+): Promise<string | null> {
   try {
     const persona = await spindle.personas.getActive(userId) ?? await spindle.personas.getDefault(userId);
     if (!persona) return null;
-    const resolvedPersona = await resolvePersonaMacro(chat, userId, persona.description);
+    const resolvedPersona = await resolvePersonaMacro(chat, userId, persona.description, characterId);
     return separatedReferenceBlock("{{user}}", [
       compactText(resolvedPersona),
     ]);
@@ -397,11 +411,16 @@ function getRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-async function resolvePersonaMacro(chat: ActiveChat, userId: string, fallback: unknown): Promise<string> {
+async function resolvePersonaMacro(
+  chat: ActiveChat,
+  userId: string,
+  fallback: unknown,
+  characterId: string | null,
+): Promise<string> {
   try {
     const result = await spindle.macros.resolve("{{persona}}", {
       chatId: chat.id,
-      characterId: chat.character_id || undefined,
+      characterId: characterId || undefined,
       userId,
       commit: false,
     });
@@ -440,9 +459,10 @@ async function buildState(userId: string): Promise<SceneMapState> {
   const latest = getLatestTrackerEntry(messages);
   const activeMessage = findLatestAssistantMessage(messages);
   if (latest && chat) {
+    const trackerMessage = messages.find((message) => message.id === latest.messageId);
     latest.displayData = await resolveTrackerDisplayData(latest.data, {
       chatId: chat.id,
-      characterId: chat.character_id,
+      characterId: resolveMessageCharacterId(chat, trackerMessage),
       userId,
     });
   }
@@ -551,9 +571,10 @@ async function generateTracker(userId?: string, expectedLatestMessageId?: string
     example_response: exampleResponse,
     example_section: exampleSection,
   });
-  const context = { chatId: chat.id, characterId: chat.character_id, userId };
+  const characterId = resolveMessageCharacterId(chat, target);
+  const context = { chatId: chat.id, characterId, userId };
   const promptMessages = await resolvePromptMessages(trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages), context);
-  const referenceMessages = await buildReferencePromptMessages(chat, userId);
+  const referenceMessages = await buildReferencePromptMessages(chat, userId, characterId);
   promptMessages.unshift(...referenceMessages);
   promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
 

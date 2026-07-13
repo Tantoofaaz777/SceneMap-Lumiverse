@@ -1867,6 +1867,23 @@ function swipeSnapshotMatches(snapshot, message, swipeId) {
   return true;
 }
 
+// src/group-character-context.ts
+function resolveMessageCharacterId(chat, message) {
+  const fallback = cleanId(chat.character_id);
+  const metadata = chat.metadata;
+  const isGroup = metadata?.group === true || metadata?.group === 1;
+  if (!isGroup)
+    return fallback;
+  const memberIds = Array.isArray(metadata?.character_ids) ? metadata.character_ids.map(cleanId).filter((id) => id !== null) : [];
+  const messageCharacterId = cleanId(message?.extra?.character_id);
+  if (!messageCharacterId || !memberIds.includes(messageCharacterId))
+    return fallback;
+  return messageCharacterId;
+}
+function cleanId(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 // src/backend.ts
 var activeGenerations = new GenerationRegistry;
 var statePushQueue = new KeyedAsyncQueue;
@@ -2045,15 +2062,15 @@ async function resolveTrackerDisplayData(value, context) {
   ]));
   return Object.fromEntries(entries);
 }
-async function buildReferencePromptMessages(chat, userId) {
+async function buildReferencePromptMessages(chat, userId, characterId) {
   const context = {
     chatId: chat.id,
-    characterId: chat.character_id,
+    characterId,
     userId
   };
   const [characterContext, personaReference, activeWorldInfo] = await Promise.all([
-    buildCharacterContext(chat, userId),
-    buildPersonaReference(chat, userId),
+    buildCharacterContext(chat, userId, characterId),
+    buildPersonaReference(chat, userId, characterId),
     buildActiveWorldInfo(chat.id, userId)
   ]);
   const worldInfoReference = separatedReferenceBlock("World Info", [
@@ -2066,11 +2083,11 @@ async function buildReferencePromptMessages(chat, userId) {
     content: await resolveDisplayText(content, context)
   })));
 }
-async function buildCharacterContext(chat, userId) {
-  if (!chat.character_id)
+async function buildCharacterContext(chat, userId, characterId) {
+  if (!characterId)
     return { reference: null, scenario: "" };
   try {
-    const character = await spindle.characters.get(chat.character_id, userId);
+    const character = await spindle.characters.get(characterId, userId);
     if (!character)
       return { reference: null, scenario: "" };
     const effectiveCharacter = resolveCharacterAlternateFields(character, chat);
@@ -2086,12 +2103,12 @@ async function buildCharacterContext(chat, userId) {
     return { reference: null, scenario: "" };
   }
 }
-async function buildPersonaReference(chat, userId) {
+async function buildPersonaReference(chat, userId, characterId) {
   try {
     const persona = await spindle.personas.getActive(userId) ?? await spindle.personas.getDefault(userId);
     if (!persona)
       return null;
-    const resolvedPersona = await resolvePersonaMacro(chat, userId, persona.description);
+    const resolvedPersona = await resolvePersonaMacro(chat, userId, persona.description, characterId);
     return separatedReferenceBlock("{{user}}", [
       compactText(resolvedPersona)
     ]);
@@ -2168,11 +2185,11 @@ ${body}` : "";
 function getRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
-async function resolvePersonaMacro(chat, userId, fallback) {
+async function resolvePersonaMacro(chat, userId, fallback, characterId) {
   try {
     const result = await spindle.macros.resolve("{{persona}}", {
       chatId: chat.id,
-      characterId: chat.character_id || undefined,
+      characterId: characterId || undefined,
       userId,
       commit: false
     });
@@ -2210,9 +2227,10 @@ async function buildState(userId) {
   const latest = getLatestTrackerEntry(messages);
   const activeMessage = findLatestAssistantMessage(messages);
   if (latest && chat) {
+    const trackerMessage = messages.find((message) => message.id === latest.messageId);
     latest.displayData = await resolveTrackerDisplayData(latest.data, {
       chatId: chat.id,
-      characterId: chat.character_id,
+      characterId: resolveMessageCharacterId(chat, trackerMessage),
       userId
     });
   }
@@ -2318,9 +2336,10 @@ ${exampleResponse}
     example_response: exampleResponse,
     example_section: exampleSection
   });
-  const context = { chatId: chat.id, characterId: chat.character_id, userId };
+  const characterId = resolveMessageCharacterId(chat, target);
+  const context = { chatId: chat.id, characterId, userId };
   const promptMessages = await resolvePromptMessages(trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages), context);
-  const referenceMessages = await buildReferencePromptMessages(chat, userId);
+  const referenceMessages = await buildReferencePromptMessages(chat, userId, characterId);
   promptMessages.unshift(...referenceMessages);
   promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
   const controller = new AbortController;
