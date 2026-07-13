@@ -798,13 +798,6 @@ spindle.onFrontendMessage(async (payload: any, userId?: string) => {
       case "get_state":
         await pushState(userId);
         break;
-      case "save_settings":
-        await settingsSaveQueue.enqueue(userId, () => saveSettings(payload.settings, userId));
-        await pushState(userId, {
-          settingsSaveRequestId: typeof payload.requestId === "string" ? payload.requestId : "",
-        });
-        spindle.toast.success("Settings saved.", { title: "SceneMap", userId });
-        break;
       case "save_preset_settings":
         await settingsSaveQueue.enqueue(userId, () => savePresetSettings(payload.settings, userId));
         await pushState(userId, {

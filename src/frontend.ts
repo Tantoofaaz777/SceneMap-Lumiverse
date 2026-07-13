@@ -19,17 +19,6 @@ import {
 import { SettingsDraftTracker } from "./settings-draft";
 import { AutomaticSettingsDraftTracker } from "./automatic-settings-draft";
 import { validateSchemaDefinition } from "./schema-validator";
-import {
-  createVisualSchemaField,
-  createVisualSchemaModel,
-  schemaNodeHasAdvancedRules,
-  setVisualSchemaNodeType,
-  visualSchemaToJson,
-  type VisualSchemaField,
-  type VisualSchemaModel,
-  type VisualSchemaNode,
-  type VisualSchemaType,
-} from "./schema-form";
 
 let state: SceneMapState = {
   settings: defaultSettings,
@@ -85,7 +74,6 @@ const presetEditorDrafts = new Map<string, PresetEditorDraft>();
 type PendingTextEditor = {
   title: string;
   onSave: (value: string) => void;
-  errorTarget: "drawer" | "settings";
 };
 
 const pendingTextEditors = new Map<string, PendingTextEditor>();
@@ -151,16 +139,12 @@ export function setup(ctx: SpindleFrontendContext) {
       isGenerationRequestPending = false;
       const saveFailed = typeof payload.requestId === "string" && settingsDraft.fail(payload.requestId);
       const automaticSaveFailed = typeof payload.requestId === "string" && automaticSettingsDraft.fail(payload.requestId);
-      const editorFailed = typeof payload.requestId === "string"
-        ? takePendingTextEditor(payload.requestId)
-        : null;
+      if (typeof payload.requestId === "string") takePendingTextEditor(payload.requestId);
       renderDrawerSettings();
       renderDockPanel();
       renderChatToolbar();
       if (saveFailed || automaticSaveFailed) {
         tabHandle?.activate();
-        showSettingsError(payload.message);
-      } else if (editorFailed?.errorTarget === "settings") {
         showSettingsError(payload.message);
       } else {
         showInlineError(payload.message);
@@ -1088,307 +1072,6 @@ function uniquePresetKey(base: string, presets: Record<string, unknown>): string
   return key;
 }
 
-function editActiveSchema() {
-  const settings = mergeSettings(state.settings);
-  const preset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
-  openVisualSchemaEditor(preset.value, (data) => {
-    if (jsonValuesEqual(data, preset.value)) return;
-    settings.schemaPresets[settings.schemaPreset] = { ...preset, value: data };
-    updateSettingsDraft(settings);
-    render();
-  });
-}
-
-function openVisualSchemaEditor(schema: Record<string, unknown>, onSave: (schema: Record<string, unknown>) => void) {
-  const ctx = ctxRef;
-  if (!ctx) return;
-  let model: VisualSchemaModel | null = null;
-  let unsupportedMessage = "";
-  try {
-    model = createVisualSchemaModel(schema);
-  } catch (error) {
-    unsupportedMessage = (error as Error).message;
-  }
-
-  const modal = ctx.ui.showModal({ title: "SceneMap Schema", width: 920, maxHeight: 820 });
-  let selectHandles: SpindleSelectHandle[] = [];
-  const showError = (message: string) => {
-    const error = modal.root.querySelector(".scenemap-schema-error") as HTMLElement | null;
-    if (!error) return;
-    error.hidden = false;
-    error.textContent = message;
-  };
-  const draw = (preserveScroll = true) => {
-    const scroller = modal.root.querySelector(".scenemap-schema-fields") as HTMLElement | null;
-    const scrollTop = preserveScroll ? scroller?.scrollTop ?? 0 : 0;
-    destroySelectHandles(selectHandles);
-    selectHandles = [];
-    modal.root.innerHTML = renderVisualSchemaEditor(model, unsupportedMessage);
-    const nextScroller = modal.root.querySelector(".scenemap-schema-fields") as HTMLElement | null;
-    if (nextScroller) nextScroller.scrollTop = scrollTop;
-    if (model) selectHandles = mountSchemaTypeSelects(modal.root, model, draw);
-  };
-  modal.onDismiss(() => {
-    destroySelectHandles(selectHandles);
-    selectHandles = [];
-  });
-  draw(false);
-
-  modal.root.addEventListener("input", (event) => {
-    if (!model) return;
-    const target = event.target as HTMLInputElement | HTMLTextAreaElement;
-    const input = target.dataset.schemaInput;
-    if (input === "root-title") model.title = target.value;
-    if (input === "root-description") model.description = target.value;
-    const node = target.dataset.nodeId ? findVisualSchemaNode(model, target.dataset.nodeId) : null;
-    if (!node) return;
-    if (input === "field-name" && "name" in node) node.name = target.value;
-    if (input === "description") node.description = target.value;
-    if (input === "minimum") node.minimum = optionalFiniteNumber(target.value);
-    if (input === "maximum") node.maximum = optionalFiniteNumber(target.value);
-  });
-
-  modal.root.addEventListener("change", (event) => {
-    if (!model) return;
-    const target = event.target as HTMLInputElement;
-    const input = target.dataset.schemaInput;
-    if (input === "root-strict") model.strict = target.checked;
-    const node = target.dataset.nodeId ? findVisualSchemaNode(model, target.dataset.nodeId) : null;
-    if (!node) return;
-    if (input === "required" && "required" in node) node.required = target.checked;
-    if (input === "strict") node.strict = target.checked;
-  });
-
-  modal.root.addEventListener("click", (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLElement>("[data-schema-action]");
-    if (!button) return;
-    const action = button.dataset.schemaAction;
-    try {
-      if (action === "cancel") {
-        modal.dismiss();
-        return;
-      }
-      if (action === "advanced") {
-        const current = model ? visualSchemaToJson(model) : schema;
-        openJsonEditor("SceneMap Schema — Advanced JSON", current, (data) => {
-          onSave(data as Record<string, unknown>);
-          modal.dismiss();
-        });
-        return;
-      }
-      if (!model) return;
-      if (action === "save") {
-        onSave(visualSchemaToJson(model));
-        modal.dismiss();
-        return;
-      }
-      if (action === "add-root") model.fields.push(createVisualSchemaField(model.fields.map((field) => field.name)));
-      const nodeId = button.dataset.nodeId;
-      if (action === "add-child" && nodeId) {
-        const node = findVisualSchemaNode(model, nodeId);
-        if (node?.type === "object") node.fields.push(createVisualSchemaField(node.fields.map((field) => field.name)));
-      }
-      const fieldId = button.dataset.fieldId;
-      if (fieldId) {
-        const context = findVisualSchemaFieldContext(model.fields, fieldId);
-        if (context && action === "remove") context.list.splice(context.index, 1);
-        if (context && action === "move-up") moveItem(context.list, context.index, context.index - 1);
-        if (context && action === "move-down") moveItem(context.list, context.index, context.index + 1);
-      }
-      draw();
-    } catch (error) {
-      showError((error as Error).message);
-    }
-  });
-}
-
-function renderVisualSchemaEditor(model: VisualSchemaModel | null, unsupportedMessage: string): string {
-  if (!model) {
-    return `
-      <div class="scenemap-schema-editor scenemap-schema-unsupported">
-        <p>This schema contains advanced structure that cannot be safely represented as a form.</p>
-        <div class="scenemap-schema-warning">${escapeHtml(unsupportedMessage)}</div>
-        <div class="scenemap-modal-actions">
-          <button type="button" class="scenemap-pill-action" data-schema-action="cancel">Cancel</button>
-          <button type="button" class="scenemap-pill-action scenemap-primary" data-schema-action="advanced">Advanced JSON</button>
-        </div>
-      </div>
-    `;
-  }
-  return `
-    <div class="scenemap-schema-editor">
-      <div class="scenemap-schema-topbar">
-        <p>Build the tracker fields without writing JSON.</p>
-        <button type="button" class="scenemap-pill-action" data-schema-action="advanced">Advanced JSON</button>
-      </div>
-      <div class="scenemap-schema-meta">
-        <label><span>Schema name</span><input data-schema-input="root-title" value="${escapeAttr(model.title)}" placeholder="SceneTracker"></label>
-        <label><span>Description</span><input data-schema-input="root-description" value="${escapeAttr(model.description)}" placeholder="What this tracker stores"></label>
-        ${renderSchemaCheckbox("root-strict", "Reject fields not listed below", model.strict)}
-      </div>
-      <div class="scenemap-schema-fields">
-        <div class="scenemap-schema-fields-heading">
-          <strong>Fields</strong>
-          <button type="button" class="scenemap-layout-add-btn" data-schema-action="add-root">${layoutIcon("plus")}<span>Add field</span></button>
-        </div>
-        ${model.fields.map((field, index) => renderVisualSchemaField(field, index, model.fields.length, 0)).join("")}
-        ${model.fields.length === 0 ? `<div class="scenemap-empty">Add the first field to this schema.</div>` : ""}
-      </div>
-      <div class="scenemap-modal-actions">
-        <button type="button" class="scenemap-pill-action" data-schema-action="cancel">Cancel</button>
-        <button type="button" class="scenemap-pill-action scenemap-primary" data-schema-action="save">Save schema</button>
-      </div>
-      <div class="scenemap-inline-error scenemap-schema-error" hidden></div>
-    </div>
-  `;
-}
-
-function renderVisualSchemaField(field: VisualSchemaField, index: number, count: number, depth: number): string {
-  return `
-    <article class="scenemap-schema-field" style="--schema-depth:${depth}">
-      <div class="scenemap-schema-field-head">
-        <label><span>Field name</span><input data-schema-input="field-name" data-node-id="${field.id}" value="${escapeAttr(field.name)}" placeholder="fieldName"></label>
-        <div class="scenemap-native-select" data-schema-type data-node-id="${field.id}"></div>
-        <div class="scenemap-schema-field-actions">
-          ${schemaIconButton("move-up", "Move up", "up", field.id, index === 0)}
-          ${schemaIconButton("move-down", "Move down", "down", field.id, index >= count - 1)}
-          ${schemaIconButton("remove", "Remove field", "trash", field.id)}
-        </div>
-      </div>
-      <label><span>Description for the AI</span><textarea rows="2" data-schema-input="description" data-node-id="${field.id}" placeholder="Explain what this field should contain">${escapeHtml(field.description)}</textarea></label>
-      <div class="scenemap-schema-flags">
-        ${renderSchemaCheckbox("required", "Required", field.required, field.id)}
-        ${schemaNodeHasAdvancedRules(field) ? `<span class="scenemap-schema-advanced-badge">Advanced rules preserved</span>` : ""}
-      </div>
-      ${renderVisualSchemaNodeDetails(field, depth)}
-    </article>
-  `;
-}
-
-function renderVisualSchemaNodeDetails(node: VisualSchemaNode, depth: number): string {
-  if (node.type === "number" || node.type === "integer") {
-    return `
-      <div class="scenemap-schema-number-row">
-        <label><span>Minimum</span><input type="number" data-schema-input="minimum" data-node-id="${node.id}" value="${node.minimum ?? ""}" placeholder="No minimum"></label>
-        <label><span>Maximum</span><input type="number" data-schema-input="maximum" data-node-id="${node.id}" value="${node.maximum ?? ""}" placeholder="No maximum"></label>
-      </div>
-    `;
-  }
-  if (node.type === "object") return renderVisualSchemaObject(node, depth);
-  if (node.type === "array") {
-    const item = node.item;
-    if (!item) return "";
-    return `
-      <div class="scenemap-schema-array">
-        <div class="scenemap-schema-subheading"><strong>Array items</strong><div class="scenemap-native-select" data-schema-type data-node-id="${item.id}"></div></div>
-        ${renderVisualSchemaNodeDetails(item, depth + 1)}
-      </div>
-    `;
-  }
-  return "";
-}
-
-function renderVisualSchemaObject(node: VisualSchemaNode, depth: number): string {
-  return `
-    <div class="scenemap-schema-object">
-      <div class="scenemap-schema-subheading">
-        ${renderSchemaCheckbox("strict", "Reject extra fields", node.strict, node.id)}
-        <button type="button" class="scenemap-layout-add-btn" data-schema-action="add-child" data-node-id="${node.id}">${layoutIcon("plus")}<span>Add nested field</span></button>
-      </div>
-      <div class="scenemap-schema-children">
-        ${node.fields.map((field, index) => renderVisualSchemaField(field, index, node.fields.length, depth + 1)).join("")}
-        ${node.fields.length === 0 ? `<div class="scenemap-empty">No nested fields yet.</div>` : ""}
-      </div>
-    </div>
-  `;
-}
-
-function renderSchemaCheckbox(input: string, label: string, checked: boolean, nodeId?: string): string {
-  return `<label class="scenemap-schema-check"><input type="checkbox" data-schema-input="${input}" ${nodeId ? `data-node-id="${nodeId}"` : ""} ${checked ? "checked" : ""}><span>${escapeHtml(label)}</span></label>`;
-}
-
-function schemaIconButton(action: string, label: string, icon: "up" | "down" | "trash", fieldId: string, disabled = false): string {
-  return `<button type="button" class="scenemap-layout-icon-btn" data-schema-action="${action}" data-field-id="${fieldId}" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}" ${disabled ? "disabled" : ""}>${layoutIcon(icon)}</button>`;
-}
-
-function mountSchemaTypeSelects(root: HTMLElement, model: VisualSchemaModel, redraw: (preserveScroll?: boolean) => void): SpindleSelectHandle[] {
-  const ctx = ctxRef;
-  if (!ctx) return [];
-  const options: SpindleSelectOption[] = [
-    { value: "string", label: "Text" },
-    { value: "integer", label: "Whole number" },
-    { value: "number", label: "Number" },
-    { value: "boolean", label: "Yes / No" },
-    { value: "object", label: "Group of fields" },
-    { value: "array", label: "List" },
-  ];
-  const handles: SpindleSelectHandle[] = [];
-  for (const target of root.querySelectorAll<HTMLElement>("[data-schema-type]")) {
-    const node = findVisualSchemaNode(model, target.dataset.nodeId ?? "");
-    if (!node) continue;
-    handles.push(ctx.components.mountSelect(target, {
-      options,
-      value: node.type,
-      portal: true,
-      searchThreshold: Number.MAX_SAFE_INTEGER,
-      ariaLabel: "Field type",
-      onChange: (value) => {
-        setVisualSchemaNodeType(node, value as VisualSchemaType);
-        queueMicrotask(() => redraw());
-      },
-    }));
-  }
-  return handles;
-}
-
-function findVisualSchemaNode(model: VisualSchemaModel, id: string): VisualSchemaNode | null {
-  for (const field of model.fields) {
-    const found = findVisualSchemaNodeInNode(field, id);
-    if (found) return found;
-  }
-  return null;
-}
-
-function findVisualSchemaNodeInNode(node: VisualSchemaNode, id: string): VisualSchemaNode | null {
-  if (node.id === id) return node;
-  for (const field of node.fields) {
-    const found = findVisualSchemaNodeInNode(field, id);
-    if (found) return found;
-  }
-  return node.item ? findVisualSchemaNodeInNode(node.item, id) : null;
-}
-
-function findVisualSchemaFieldContext(fields: VisualSchemaField[], id: string): { list: VisualSchemaField[]; index: number } | null {
-  const index = fields.findIndex((field) => field.id === id);
-  if (index >= 0) return { list: fields, index };
-  for (const field of fields) {
-    const nested = findVisualSchemaFieldContext(field.fields, id)
-      ?? (field.item ? findVisualSchemaFieldContext(field.item.fields, id) : null);
-    if (nested) return nested;
-  }
-  return null;
-}
-
-function optionalFiniteNumber(value: string): number | null {
-  if (!value.trim()) return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function editPrompt() {
-  const settings = mergeSettings(state.settings);
-  const key = settings.schemaPreset;
-  const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
-  const currentPrompt = getPresetPrompt(settings, key);
-  openTextEditor("SceneMap Prompt", currentPrompt, (text) => {
-    const nextPrompt = text || DEFAULT_PROMPT_JSON;
-    if (nextPrompt === currentPrompt) return;
-    settings.schemaPresets[key] = { ...preset, promptJson: nextPrompt };
-    updateSettingsDraft(settings);
-    render();
-  });
-}
-
 function editLayout() {
   const settings = mergeSettings(state.settings);
   const key = settings.schemaPreset;
@@ -1592,12 +1275,12 @@ function renderChildFieldEditor(field: TrackerBoardField, options: SchemaFieldOp
         <strong>Card fields</strong>
         <button type="button" class="scenemap-layout-add-btn" data-layout-action="add-child" data-section="${sectionIndex}" data-field="${fieldIndex}" ${hasAvailableChildren ? "" : "disabled"}>${layoutIcon("plus")}<span>Add card field</span></button>
       </div>
-      ${children.map((child, childIndex) => renderChildField(field, child, childIndex, children.length, options, sectionIndex, fieldIndex)).join("")}
+      ${children.map((child, childIndex) => renderChildField(child, childIndex, children.length, sectionIndex, fieldIndex)).join("")}
     </div>
   `;
 }
 
-function renderChildField(parent: TrackerBoardField, child: TrackerBoardField, childIndex: number, childCount: number, options: SchemaFieldOption[], sectionIndex: number, fieldIndex: number): string {
+function renderChildField(child: TrackerBoardField, childIndex: number, childCount: number, sectionIndex: number, fieldIndex: number): string {
   return `
     <div class="scenemap-layout-child-row">
       <div class="scenemap-native-select" data-layout-select="child-path" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>
@@ -1989,22 +1672,20 @@ function openJsonEditor(title: string, value: unknown, onSave: (data: unknown) =
 function openTextEditor(title: string, value: string, onSave: (value: string) => void) {
   if (Array.from(pendingTextEditors.values()).some((pending) => pending.title === title)) {
     const message = `${title} is already open.`;
-    if (title.includes("Tracker")) showInlineError(message);
-    else showSettingsError(message);
+    showInlineError(message);
     return;
   }
   const requestId = `editor-${Date.now()}-${++editorRequestSeq}`;
   pendingTextEditors.set(requestId, {
     title,
     onSave,
-    errorTarget: title.includes("Tracker") ? "drawer" : "settings",
   });
   send({
     type: "open_text_editor",
     requestId,
     title,
     value,
-    placeholder: title.includes("Prompt") ? "Write the SceneMap generation prompt. Macros like {{schema}} are supported." : "",
+    placeholder: "",
   });
 }
 
@@ -2017,8 +1698,7 @@ function handleTextEditorResult(payload: any) {
   try {
     pending.onSave(text);
   } catch (err) {
-    if (pending.errorTarget === "settings") showSettingsError((err as Error).message);
-    else showInlineError((err as Error).message);
+    showInlineError((err as Error).message);
     openTextEditor(pending.title, text, pending.onSave);
   }
 }
@@ -2313,13 +1993,12 @@ const styles = `
 .scenemap-preset-schema-error { margin-top: -4px; }
 .scenemap-preset-layout-row { display: flex; justify-content: flex-end; gap: 8px; }
 .scenemap-preset-layout-row .scenemap-primary { min-width: 112px; }
-.scenemap-settings-shell input:not([type="checkbox"]), .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-name-editor input, .scenemap-schema-editor input:not([type="checkbox"]), .scenemap-schema-editor textarea {
+.scenemap-settings-shell input:not([type="checkbox"]), .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-name-editor input {
   width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: 6px;
   background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 7px 9px; font: inherit;
 }
 .scenemap-native-select { width: 100%; min-width: 0; }
 body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-index: 10004 !important; }
-body:has([data-spindle-modal] .scenemap-schema-editor) > [role="listbox"] { z-index: 10004 !important; }
 .scenemap-editor { display: flex; flex-direction: column; gap: 10px; }
 .scenemap-name-editor { display: flex; flex-direction: column; gap: 12px; color: var(--lumiverse-text); }
 .scenemap-name-editor label { display: flex; flex-direction: column; gap: 5px; color: var(--lumiverse-text-muted); font-size: 12px; }
@@ -2344,35 +2023,13 @@ body:has([data-spindle-modal] .scenemap-schema-editor) > [role="listbox"] { z-in
 .scenemap-layout-child-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .scenemap-layout-child-header strong { font-size: 12px; color: var(--lumiverse-text-muted); text-transform: uppercase; }
 .scenemap-layout-child-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto auto auto; gap: 6px; align-items: center; }
-.scenemap-schema-editor { display: flex; flex-direction: column; gap: 12px; color: var(--lumiverse-text); min-height: 0; }
-.scenemap-schema-topbar, .scenemap-schema-fields-heading, .scenemap-schema-subheading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.scenemap-schema-topbar p, .scenemap-schema-unsupported p { margin: 0; color: var(--lumiverse-text-muted); font-size: 12px; }
-.scenemap-schema-meta { display: grid; grid-template-columns: minmax(160px, .7fr) minmax(240px, 1.3fr); gap: 8px 12px; padding: 12px; border: 1px solid var(--lumiverse-border); border-radius: 8px; background: var(--lumiverse-fill-subtle); }
-.scenemap-schema-editor label { display: flex; flex-direction: column; gap: 5px; min-width: 0; color: var(--lumiverse-text-muted); font-size: 11px; }
-.scenemap-schema-meta .scenemap-schema-check { grid-column: 1 / -1; }
-.scenemap-schema-fields { display: flex; flex-direction: column; gap: 10px; max-height: min(58vh, 560px); overflow: auto; padding-right: 6px; }
-.scenemap-schema-fields-heading { position: sticky; top: 0; z-index: 2; padding: 6px 0; background: var(--lumiverse-bg); }
-.scenemap-schema-fields-heading strong, .scenemap-schema-subheading strong { font-size: 11px; color: var(--lumiverse-accent); letter-spacing: .08em; text-transform: uppercase; }
-.scenemap-schema-field { display: flex; flex-direction: column; gap: 9px; padding: 11px; border: 1px solid var(--lumiverse-border); border-radius: 8px; background: color-mix(in srgb, var(--lumiverse-fill-subtle) 88%, var(--lumiverse-primary, var(--lumiverse-accent)) 3%); }
-.scenemap-schema-field-head { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(140px, .7fr) auto; align-items: end; gap: 8px; }
-.scenemap-schema-field-actions { display: flex; gap: 5px; align-items: center; }
-.scenemap-schema-field textarea { resize: vertical; min-height: 48px; }
-.scenemap-schema-flags { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.scenemap-schema-check { display: inline-flex !important; flex-direction: row !important; align-items: center; gap: 7px !important; color: var(--lumiverse-text) !important; cursor: pointer; }
-.scenemap-schema-check input { width: auto; margin: 0; accent-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
-.scenemap-schema-advanced-badge { padding: 3px 7px; border: 1px solid var(--lumiverse-border); border-radius: 999px; color: var(--lumiverse-text-muted); font-size: 10px; }
-.scenemap-schema-number-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.scenemap-schema-object, .scenemap-schema-array { display: flex; flex-direction: column; gap: 8px; padding: 9px; border-left: 2px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 60%, transparent); border-radius: 0 7px 7px 0; }
-.scenemap-schema-subheading > .scenemap-native-select { max-width: 220px; }
-.scenemap-schema-children { display: flex; flex-direction: column; gap: 8px; }
-.scenemap-schema-warning { padding: 10px; border: 1px solid color-mix(in srgb, var(--lumiverse-warning, #f59e0b) 45%, transparent); border-radius: 8px; color: var(--lumiverse-warning, #f59e0b); background: color-mix(in srgb, var(--lumiverse-warning, #f59e0b) 8%, transparent); font-size: 12px; }
-.scenemap-lv button, .scenemap-editor button, .scenemap-layout-editor button, .scenemap-name-editor button, .scenemap-schema-editor button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
-.scenemap-lv button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-layout-editor button:hover:not(:disabled), .scenemap-name-editor button:hover:not(:disabled), .scenemap-schema-editor button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
-.scenemap-lv button:disabled, .scenemap-editor button:disabled, .scenemap-layout-editor button:disabled, .scenemap-name-editor button:disabled, .scenemap-schema-editor button:disabled { opacity: 0.45; cursor: default; }
-.scenemap-lv .scenemap-primary, .scenemap-editor .scenemap-primary, .scenemap-layout-editor .scenemap-primary, .scenemap-name-editor .scenemap-primary, .scenemap-schema-editor .scenemap-primary { background: var(--lumiverse-primary-015, color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 15%, transparent)); color: var(--lumiverse-primary-text, var(--lumiverse-primary, var(--lumiverse-accent))); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); }
-.scenemap-lv .scenemap-primary:hover:not(:disabled), .scenemap-editor .scenemap-primary:hover:not(:disabled), .scenemap-layout-editor .scenemap-primary:hover:not(:disabled), .scenemap-name-editor .scenemap-primary:hover:not(:disabled), .scenemap-schema-editor .scenemap-primary:hover:not(:disabled) { background: var(--lumiverse-primary-020, color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 22%, transparent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
-.scenemap-lv .scenemap-danger, .scenemap-editor .scenemap-danger, .scenemap-layout-editor .scenemap-danger, .scenemap-name-editor .scenemap-danger, .scenemap-schema-editor .scenemap-danger { background: var(--lumiverse-danger-015, rgba(239, 68, 68, .15)); color: var(--lumiverse-danger, #ef4444); border-color: var(--lumiverse-danger-050, rgba(239, 68, 68, .5)); }
-.scenemap-lv .scenemap-danger:hover:not(:disabled), .scenemap-editor .scenemap-danger:hover:not(:disabled), .scenemap-layout-editor .scenemap-danger:hover:not(:disabled), .scenemap-name-editor .scenemap-danger:hover:not(:disabled), .scenemap-schema-editor .scenemap-danger:hover:not(:disabled) { background: var(--lumiverse-danger-020, rgba(239, 68, 68, .2)); border-color: var(--lumiverse-danger, #ef4444); }
+.scenemap-lv button, .scenemap-editor button, .scenemap-layout-editor button, .scenemap-name-editor button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
+.scenemap-lv button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-layout-editor button:hover:not(:disabled), .scenemap-name-editor button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
+.scenemap-lv button:disabled, .scenemap-editor button:disabled, .scenemap-layout-editor button:disabled, .scenemap-name-editor button:disabled { opacity: 0.45; cursor: default; }
+.scenemap-lv .scenemap-primary, .scenemap-editor .scenemap-primary, .scenemap-layout-editor .scenemap-primary, .scenemap-name-editor .scenemap-primary { background: var(--lumiverse-primary-015, color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 15%, transparent)); color: var(--lumiverse-primary-text, var(--lumiverse-primary, var(--lumiverse-accent))); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); }
+.scenemap-lv .scenemap-primary:hover:not(:disabled), .scenemap-editor .scenemap-primary:hover:not(:disabled), .scenemap-layout-editor .scenemap-primary:hover:not(:disabled), .scenemap-name-editor .scenemap-primary:hover:not(:disabled) { background: var(--lumiverse-primary-020, color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 22%, transparent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
+.scenemap-lv .scenemap-danger, .scenemap-editor .scenemap-danger, .scenemap-layout-editor .scenemap-danger, .scenemap-name-editor .scenemap-danger { background: var(--lumiverse-danger-015, rgba(239, 68, 68, .15)); color: var(--lumiverse-danger, #ef4444); border-color: var(--lumiverse-danger-050, rgba(239, 68, 68, .5)); }
+.scenemap-lv .scenemap-danger:hover:not(:disabled), .scenemap-editor .scenemap-danger:hover:not(:disabled), .scenemap-layout-editor .scenemap-danger:hover:not(:disabled), .scenemap-name-editor .scenemap-danger:hover:not(:disabled) { background: var(--lumiverse-danger-020, rgba(239, 68, 68, .2)); border-color: var(--lumiverse-danger, #ef4444); }
 .scenemap-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
 .scenemap-pill-action { border-radius: 999px !important; padding: 7px 13px !important; min-height: 34px; }
 .scenemap-pill-icon { width: 34px; min-width: 34px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; }
@@ -2381,10 +2038,6 @@ body:has([data-spindle-modal] .scenemap-schema-editor) > [role="listbox"] { z-in
 .scenemap-pill-icon.has-unsaved-settings::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; border-radius: 50%; background: var(--lumiverse-warning, var(--lumiverse-accent)); box-shadow: 0 0 0 2px var(--lumiverse-bg, #11131d); }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: 8px; padding: 10px; font-size: 12px; }
 @media (max-width: 760px) {
-  .scenemap-schema-meta, .scenemap-schema-field-head { grid-template-columns: 1fr; }
-  .scenemap-schema-field-actions { justify-content: flex-start; }
-  .scenemap-schema-topbar, .scenemap-schema-subheading { align-items: stretch; flex-direction: column; }
-  .scenemap-schema-subheading > .scenemap-native-select { max-width: none; }
   .scenemap-layout-section-header { grid-template-columns: 1fr; align-items: stretch; }
   .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: repeat(3, 36px) 1fr; align-items: center; }
   .scenemap-layout-field-row > [data-layout-select]:nth-child(1),
