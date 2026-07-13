@@ -3684,6 +3684,7 @@ var settingsSaveRequestSeq = 0;
 var automaticSaveRequestSeq = 0;
 var drawerSelectHandles = [];
 var automaticSaveTimer = null;
+var drawerScrollRestoreFrame = null;
 var drawerView = "settings";
 var appliedTrackerPlacement = null;
 var presetEditorDrafts = new Map;
@@ -3698,6 +3699,9 @@ function setup(ctx) {
   if (automaticSaveTimer)
     clearTimeout(automaticSaveTimer);
   automaticSaveTimer = null;
+  if (drawerScrollRestoreFrame !== null)
+    cancelAnimationFrame(drawerScrollRestoreFrame);
+  drawerScrollRestoreFrame = null;
   dockPanelSize = readStoredDockPanelSize();
   ctxRef = ctx;
   const removeStyle = ctx.dom.addStyle(styles);
@@ -3794,6 +3798,9 @@ function setup(ctx) {
     offTabActivate();
     destroySelectHandles(drawerSelectHandles);
     drawerSelectHandles = [];
+    if (drawerScrollRestoreFrame !== null)
+      cancelAnimationFrame(drawerScrollRestoreFrame);
+    drawerScrollRestoreFrame = null;
     tab.destroy();
     destroyDockPanel();
     removeStyle();
@@ -4008,6 +4015,9 @@ function renderDockPanel() {
 function renderDrawerContent() {
   if (!rootRef)
     return;
+  if (drawerScrollRestoreFrame !== null)
+    cancelAnimationFrame(drawerScrollRestoreFrame);
+  drawerScrollRestoreFrame = null;
   if (mergeSettings(state.settings).trackerPlacement === "drawer" && drawerView === "tracker") {
     destroySelectHandles(drawerSelectHandles);
     drawerSelectHandles = [];
@@ -4075,6 +4085,10 @@ function trackerPanelMarkup() {
 function renderDrawerSettings() {
   if (!rootRef)
     return;
+  if (drawerScrollRestoreFrame !== null)
+    cancelAnimationFrame(drawerScrollRestoreFrame);
+  drawerScrollRestoreFrame = null;
+  const scrollSnapshot = captureScrollPositions(rootRef);
   destroySelectHandles(drawerSelectHandles);
   drawerSelectHandles = [];
   const settings = mergeSettings(state.settings);
@@ -4085,7 +4099,6 @@ function renderDrawerSettings() {
   const drawerTrackerMode = settings.trackerPlacement === "drawer";
   const settingsMarkup = `
     <div class="scenemap-shell scenemap-settings-shell">
-      <p class="scenemap-settings-dirty" data-settings-dirty ${settingsDraft.dirty ? "" : "hidden"}>Unsaved preset changes</p>
       ${dockPanelError ? `<div class="scenemap-runtime-error">${escapeHtml(dockPanelError)}</div>` : ""}
       <section class="scenemap-settings-scroll">
         <div class="scenemap-settings-group">
@@ -4137,7 +4150,10 @@ function renderDrawerSettings() {
           </label>
         </div>
         <div class="scenemap-settings-group scenemap-settings-preset-row">
-          <h3>Presets</h3>
+          <div class="scenemap-settings-group-heading">
+            <h3>Presets</h3>
+            <p class="scenemap-settings-dirty ${settingsDraft.dirty ? "is-visible" : ""}" data-settings-dirty aria-hidden="${!settingsDraft.dirty}">Unsaved preset changes</p>
+          </div>
           <div class="scenemap-preset-toolbar">
             <label class="scenemap-preset-select">
               <span>Global preset</span>
@@ -4181,6 +4197,11 @@ function renderDrawerSettings() {
   else
     rootRef.innerHTML = settingsMarkup;
   mountSettingsSelects(settings);
+  restoreScrollPositions(scrollSnapshot);
+  drawerScrollRestoreFrame = requestAnimationFrame(() => {
+    drawerScrollRestoreFrame = null;
+    restoreScrollPositions(scrollSnapshot);
+  });
 }
 function mountSettingsSelects(settings) {
   if (!ctxRef || !rootRef)
@@ -4261,6 +4282,20 @@ function flushAutomaticSettingsSave() {
 function destroySelectHandles(handles) {
   for (const handle of handles)
     handle.destroy();
+}
+function captureScrollPositions(root) {
+  const snapshots = [];
+  for (let element = root;element; element = element.parentElement) {
+    snapshots.push({ element, top: element.scrollTop, left: element.scrollLeft });
+  }
+  return snapshots;
+}
+function restoreScrollPositions(snapshots) {
+  for (const snapshot of snapshots) {
+    if (!snapshot.element.isConnected)
+      continue;
+    snapshot.element.scrollTo({ top: snapshot.top, left: snapshot.left, behavior: "instant" });
+  }
 }
 function statusText() {
   if (!state.chatId)
@@ -4379,8 +4414,10 @@ function updateSettingsDraft(settings) {
 }
 function revealUnsavedSettings() {
   const indicator = rootRef?.querySelector("[data-settings-dirty]");
-  if (indicator)
-    indicator.hidden = false;
+  if (!indicator)
+    return;
+  indicator.classList.add("is-visible");
+  indicator.setAttribute("aria-hidden", "false");
 }
 function getPresetEditorDraft(settings, key) {
   const existing = presetEditorDrafts.get(key);
@@ -5802,7 +5839,10 @@ var styles = `
 .scenemap-lv .scenemap-view-tabs button:hover:not(:disabled):not(.is-active) { color: var(--lumiverse-text-muted); background: var(--lumiverse-fill-subtle); border-color: transparent; }
 .scenemap-lv .scenemap-view-tabs button.is-active, .scenemap-lv .scenemap-view-tabs button.is-active:hover:not(:disabled) { color: var(--lumiverse-primary-text, var(--lumiverse-primary)); background: var(--lumiverse-primary-015, color-mix(in srgb, var(--lumiverse-primary) 15%, transparent)); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary)); box-shadow: var(--lumiverse-shadow-sm); }
 .scenemap-settings-shell { gap: 0; }
-.scenemap-settings-dirty { flex: 0 0 auto; margin: 0; padding: 0 0 10px; border-bottom: 1px solid var(--lumiverse-border); color: var(--lumiverse-warning, var(--lumiverse-accent)); font-size: 11px; }
+.scenemap-settings-group-heading { min-height: 14px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.scenemap-settings-group .scenemap-settings-group-heading h3 { margin: 0; }
+.scenemap-settings-dirty { margin: 0; color: var(--lumiverse-warning, var(--lumiverse-accent)); font-size: 10px; line-height: 1.4; white-space: nowrap; visibility: hidden; }
+.scenemap-settings-dirty.is-visible { visibility: visible; }
 .scenemap-settings-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px 8px 12px 0; }
 .scenemap-settings-group { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: var(--lumiverse-radius, 8px); padding: 12px; }
 .scenemap-settings-group h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
