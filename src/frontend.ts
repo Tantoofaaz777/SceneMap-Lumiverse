@@ -2118,7 +2118,12 @@ const styles = `
 }
 .scenemap-native-select { width: 100%; min-width: 0; }
 .scenemap-secondary-control { background: var(--lumiverse-secondary, rgba(128, 128, 128, .15)) !important; }
-body:has(.scenemap-secondary-control[aria-expanded="true"]) > [role="listbox"] { background: var(--lumiverse-secondary, rgba(128, 128, 128, .15)) !important; }
+body:has(.scenemap-secondary-control[aria-expanded="true"]) > [role="listbox"] {
+  background:
+    linear-gradient(var(--lumiverse-secondary, rgba(128, 128, 128, .15)), var(--lumiverse-secondary, rgba(128, 128, 128, .15))),
+    linear-gradient(var(--lumiverse-bg, rgba(28, 24, 38, .95)), var(--lumiverse-bg, rgba(28, 24, 38, .95))),
+    var(--lumiverse-bg-deep, #0a0812) !important;
+}
 body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-index: 10004 !important; }
 .scenemap-editor { display: flex; flex-direction: column; gap: 10px; }
 .scenemap-name-editor { display: flex; flex-direction: column; gap: 12px; color: var(--lumiverse-text); }
