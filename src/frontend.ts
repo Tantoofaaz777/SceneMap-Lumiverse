@@ -1848,25 +1848,60 @@ function extractSchemaFieldOptions(schema: Record<string, unknown>): SchemaField
   return Object.entries(properties).flatMap(([key, value]) => schemaToOptions(value, key, key, schema));
 }
 
-function schemaToOptions(schema: unknown, path: string, labelSeed: string, rootSchema: Record<string, unknown>): SchemaFieldOption[] {
-  const record = normalizeSchemaForLayout(schema, rootSchema);
+const MAX_LAYOUT_SCHEMA_DEPTH = 20;
+
+function schemaToOptions(
+  schema: unknown,
+  path: string,
+  labelSeed: string,
+  rootSchema: Record<string, unknown>,
+  seenRefs = new Set<string>(),
+  depth = 0,
+): SchemaFieldOption[] {
+  const source = getRecord(schema);
+  const ref = typeof source.$ref === "string" && source.$ref.startsWith("#/") ? source.$ref : null;
+  if (depth >= MAX_LAYOUT_SCHEMA_DEPTH || (ref && seenRefs.has(ref))) {
+    return [{ path, label: schemaLabel(source, labelSeed), display: defaultDisplayForSchema(source, path) }];
+  }
+  const nextSeenRefs = ref ? new Set(seenRefs).add(ref) : seenRefs;
+  const record = normalizeSchemaForLayout(schema, rootSchema, seenRefs);
   const type = record.type;
   if (type === "array") {
-    const items = normalizeSchemaForLayout(record.items, rootSchema);
+    const itemSource = getRecord(record.items);
+    const itemRef = typeof itemSource.$ref === "string" && itemSource.$ref.startsWith("#/") ? itemSource.$ref : null;
+    if (itemRef && nextSeenRefs.has(itemRef)) {
+      return [{ path, label: schemaLabel(record, labelSeed), display: "chips" }];
+    }
+    const itemSeenRefs = itemRef ? new Set(nextSeenRefs).add(itemRef) : nextSeenRefs;
+    const items = normalizeSchemaForLayout(record.items, rootSchema, nextSeenRefs);
     const itemProperties = getSchemaProperties(items);
     if (itemProperties) {
       return [{
         path,
         label: schemaLabel(record, labelSeed),
         display: "character_cards",
-        children: Object.entries(itemProperties).flatMap(([key, value]) => schemaToOptions(value, key, key, rootSchema)),
+        children: Object.entries(itemProperties).flatMap(([key, value]) => schemaToOptions(
+          value,
+          key,
+          key,
+          rootSchema,
+          itemSeenRefs,
+          depth + 1,
+        )),
       }];
     }
     return [{ path, label: schemaLabel(record, labelSeed), display: "chips" }];
   }
   const properties = getSchemaProperties(record);
   if (properties) {
-    return Object.entries(properties).flatMap(([key, value]) => schemaToOptions(value, `${path}.${key}`, key, rootSchema));
+    return Object.entries(properties).flatMap(([key, value]) => schemaToOptions(
+      value,
+      `${path}.${key}`,
+      key,
+      rootSchema,
+      nextSeenRefs,
+      depth + 1,
+    ));
   }
   return [{ path, label: schemaLabel(record, labelSeed), display: defaultDisplayForSchema(record, path) }];
 }

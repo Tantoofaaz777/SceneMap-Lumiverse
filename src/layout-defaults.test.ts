@@ -72,4 +72,51 @@ describe("createSchemaDefaultLayout", () => {
       "objective",
     ]);
   });
+
+  test("stops expanding self-referential schemas", () => {
+    const layout = createSchemaDefaultLayout({
+      title: "Recursive Tracker",
+      type: "object",
+      properties: {
+        node: { $ref: "#/$defs/node" },
+      },
+      $defs: {
+        node: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            child: { $ref: "#/$defs/node" },
+          },
+        },
+      },
+    });
+
+    expect(layout.sections[0].fields.map((field) => field.path)).toEqual([
+      "node.name",
+      "node.child",
+    ]);
+  });
+
+  test("stops expanding mutually recursive schemas", () => {
+    const layout = createSchemaDefaultLayout({
+      type: "object",
+      properties: {
+        first: { $ref: "#/$defs/first" },
+      },
+      $defs: {
+        first: {
+          type: "object",
+          properties: { second: { $ref: "#/$defs/second" } },
+        },
+        second: {
+          type: "object",
+          properties: { first: { $ref: "#/$defs/first" } },
+        },
+      },
+    });
+
+    expect(layout.sections[0].fields.map((field) => field.path)).toEqual([
+      "first.second.first",
+    ]);
+  });
 });
