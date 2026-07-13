@@ -1,4 +1,5 @@
 import type { SpindleFrontendContext, SpindleSelectHandle, SpindleSelectOption } from "lumiverse-spindle-types";
+import Sortable from "sortablejs";
 import {
   DEFAULT_DISPLAY_LAYOUT,
   DEFAULT_PROMPT_JSON,
@@ -1246,17 +1247,23 @@ function editLayout() {
 
   const modal = ctx.ui.showModal({ title: "SceneMap Layout", width: 860, maxHeight: 760 });
   let layoutSelectHandles: SpindleSelectHandle[] = [];
+  let layoutSortables: Sortable[] = [];
   const draw = (preserveScroll = true) => {
     const scroller = modal.root.querySelector(".scenemap-layout-sections") as HTMLElement | null;
     const scrollTop = preserveScroll ? scroller?.scrollTop ?? 0 : 0;
+    destroyLayoutSortables(layoutSortables);
+    layoutSortables = [];
     destroySelectHandles(layoutSelectHandles);
     layoutSelectHandles = [];
     modal.root.innerHTML = renderLayoutEditor(workingLayout, fieldOptions);
     const nextScroller = modal.root.querySelector(".scenemap-layout-sections") as HTMLElement | null;
     if (nextScroller) nextScroller.scrollTop = scrollTop;
     layoutSelectHandles = mountLayoutSelects(modal.root, workingLayout, fieldOptions, draw);
+    layoutSortables = mountLayoutSortables(modal.root, workingLayout, draw);
   };
   modal.onDismiss(() => {
+    destroyLayoutSortables(layoutSortables);
+    layoutSortables = [];
     destroySelectHandles(layoutSelectHandles);
     layoutSelectHandles = [];
   });
@@ -1291,6 +1298,23 @@ function editLayout() {
       field.fields[childIndex].center = target.checked;
     }
   });
+  modal.root.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    const handle = (event.target as HTMLElement).closest<HTMLElement>("[data-layout-drag]");
+    if (!handle) return;
+    const kind = handle.dataset.layoutDrag as LayoutDragKind | undefined;
+    if (!kind) return;
+    const sectionIndex = readIndex(handle.dataset.section);
+    const fieldIndex = readIndex(handle.dataset.field);
+    const childIndex = readIndex(handle.dataset.child);
+    const currentIndex = kind === "section" ? sectionIndex : kind === "field" ? fieldIndex : childIndex;
+    if (currentIndex === null) return;
+    const nextIndex = currentIndex + (event.key === "ArrowUp" ? -1 : 1);
+    if (!reorderLayoutItem(workingLayout, kind, currentIndex, nextIndex, sectionIndex, fieldIndex)) return;
+    event.preventDefault();
+    draw();
+    focusLayoutDragHandle(modal.root, kind, nextIndex, sectionIndex, fieldIndex);
+  });
   modal.root.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLElement>("[data-layout-action]");
     if (!button) return;
@@ -1301,19 +1325,11 @@ function editLayout() {
     try {
       if (action === "add-section") workingLayout.sections.push({ title: "New Section", fields: [] });
       if (action === "remove-section" && sectionIndex !== null) workingLayout.sections.splice(sectionIndex, 1);
-      if (action === "move-section-up" && sectionIndex !== null) moveItem(workingLayout.sections, sectionIndex, sectionIndex - 1);
-      if (action === "move-section-down" && sectionIndex !== null) moveItem(workingLayout.sections, sectionIndex, sectionIndex + 1);
       if (action === "add-field" && sectionIndex !== null) {
         workingLayout.sections[sectionIndex].fields.push(createFieldFromOption(getAvailableFieldOptions(workingLayout, fieldOptions)[0]));
       }
       if (action === "remove-field" && sectionIndex !== null && fieldIndex !== null) {
         workingLayout.sections[sectionIndex].fields.splice(fieldIndex, 1);
-      }
-      if (action === "move-field-up" && sectionIndex !== null && fieldIndex !== null) {
-        moveItem(workingLayout.sections[sectionIndex].fields, fieldIndex, fieldIndex - 1);
-      }
-      if (action === "move-field-down" && sectionIndex !== null && fieldIndex !== null) {
-        moveItem(workingLayout.sections[sectionIndex].fields, fieldIndex, fieldIndex + 1);
       }
       if (action === "add-child" && sectionIndex !== null && fieldIndex !== null) {
         const field = workingLayout.sections[sectionIndex].fields[fieldIndex];
@@ -1323,12 +1339,6 @@ function editLayout() {
       }
       if (action === "remove-child" && sectionIndex !== null && fieldIndex !== null && childIndex !== null) {
         workingLayout.sections[sectionIndex].fields[fieldIndex].fields?.splice(childIndex, 1);
-      }
-      if (action === "move-child-up" && sectionIndex !== null && fieldIndex !== null && childIndex !== null) {
-        moveItem(workingLayout.sections[sectionIndex].fields[fieldIndex].fields ?? [], childIndex, childIndex - 1);
-      }
-      if (action === "move-child-down" && sectionIndex !== null && fieldIndex !== null && childIndex !== null) {
-        moveItem(workingLayout.sections[sectionIndex].fields[fieldIndex].fields ?? [], childIndex, childIndex + 1);
       }
       if (action === "cancel") {
         modal.dismiss();
@@ -1371,7 +1381,7 @@ function renderLayoutEditor(layout: TrackerBoardDisplayLayout, options: SchemaFi
       <div class="scenemap-layout-intro">
         <button type="button" class="scenemap-layout-add-btn" data-layout-action="add-section" ${hasAvailableFields ? "" : "disabled"}>${layoutIcon("plus")}<span>Add section</span></button>
       </div>
-      <div class="scenemap-layout-sections">
+      <div class="scenemap-layout-sections" data-layout-sortable="section">
         ${layout.sections.map((section, sectionIndex) => renderLayoutSection(section, sectionIndex, layout, options)).join("")}
       </div>
       <div class="scenemap-modal-actions">
@@ -1387,39 +1397,37 @@ function renderLayoutEditor(layout: TrackerBoardDisplayLayout, options: SchemaFi
 function renderLayoutSection(section: TrackerBoardDisplayLayout["sections"][number], sectionIndex: number, layout: TrackerBoardDisplayLayout, options: SchemaFieldOption[]): string {
   const hasAvailableFields = getAvailableFieldOptions(layout, options).length > 0;
   return `
-    <section class="scenemap-layout-section">
+    <section class="scenemap-layout-section" data-layout-section-item>
       <header class="scenemap-layout-section-header">
+        ${layoutDragHandle("section", "Drag to reorder section", { section: sectionIndex })}
         <label>
           <span>Section name</span>
           <input data-layout-input="section-title" data-section="${sectionIndex}" value="${escapeAttr(section.title)}">
         </label>
         <div class="scenemap-layout-actions">
-          ${iconButton("move-section-up", "Move up", "up", { section: sectionIndex, disabled: sectionIndex === 0 })}
-          ${iconButton("move-section-down", "Move down", "down", { section: sectionIndex, disabled: sectionIndex >= layout.sections.length - 1 })}
           ${iconButton("remove-section", "Remove section", "trash", { section: sectionIndex })}
         </div>
       </header>
-      <div class="scenemap-layout-fields">
-        ${section.fields.map((field, fieldIndex) => renderLayoutField(field, sectionIndex, fieldIndex, layout, options)).join("")}
+      <div class="scenemap-layout-fields" data-layout-sortable="field" data-section="${sectionIndex}">
+        ${section.fields.map((field, fieldIndex) => renderLayoutField(field, sectionIndex, fieldIndex, options)).join("")}
       </div>
       <button type="button" class="scenemap-layout-add-btn" data-layout-action="add-field" data-section="${sectionIndex}" ${hasAvailableFields ? "" : "disabled"}>${layoutIcon("plus")}<span>Add field</span></button>
     </section>
   `;
 }
 
-function renderLayoutField(field: TrackerBoardField, sectionIndex: number, fieldIndex: number, layout: TrackerBoardDisplayLayout, options: SchemaFieldOption[]): string {
+function renderLayoutField(field: TrackerBoardField, sectionIndex: number, fieldIndex: number, options: SchemaFieldOption[]): string {
   const option = findFieldOption(options, field.path);
   const childEditor = field.display === "character_cards"
     ? renderChildFieldEditor(field, option?.children ?? [], sectionIndex, fieldIndex)
     : "";
   return `
-    <article class="scenemap-layout-field">
+    <article class="scenemap-layout-field" data-layout-field-item>
       <div class="scenemap-layout-field-row">
+        ${layoutDragHandle("field", "Drag to reorder field", { section: sectionIndex, field: fieldIndex })}
         <div class="scenemap-native-select" data-layout-select="field-path" data-section="${sectionIndex}" data-field="${fieldIndex}"></div>
         <input aria-label="Label" data-layout-input="field-label" data-section="${sectionIndex}" data-field="${fieldIndex}" value="${escapeAttr(field.label ?? option?.label ?? "")}" placeholder="Label">
         <div class="scenemap-native-select" data-layout-select="field-display" data-section="${sectionIndex}" data-field="${fieldIndex}"></div>
-        ${iconButton("move-field-up", "Move up", "up", { section: sectionIndex, field: fieldIndex, disabled: fieldIndex === 0 })}
-        ${iconButton("move-field-down", "Move down", "down", { section: sectionIndex, field: fieldIndex, disabled: fieldIndex >= layout.sections[sectionIndex].fields.length - 1 })}
         ${iconButton("remove-field", "Remove field", "trash", { section: sectionIndex, field: fieldIndex })}
       </div>
       ${renderChipCenterToggle("field-center", field.center === true, { section: sectionIndex, field: fieldIndex }, field.display === "chips")}
@@ -1437,22 +1445,25 @@ function renderChildFieldEditor(field: TrackerBoardField, options: SchemaFieldOp
         <strong>Card fields</strong>
         <button type="button" class="scenemap-layout-add-btn" data-layout-action="add-child" data-section="${sectionIndex}" data-field="${fieldIndex}" ${hasAvailableChildren ? "" : "disabled"}>${layoutIcon("plus")}<span>Add card field</span></button>
       </div>
-      ${children.map((child, childIndex) => renderChildField(child, childIndex, children.length, sectionIndex, fieldIndex)).join("")}
+      <div class="scenemap-layout-child-list" data-layout-sortable="child" data-section="${sectionIndex}" data-field="${fieldIndex}">
+        ${children.map((child, childIndex) => renderChildField(child, childIndex, sectionIndex, fieldIndex)).join("")}
+      </div>
     </div>
   `;
 }
 
-function renderChildField(child: TrackerBoardField, childIndex: number, childCount: number, sectionIndex: number, fieldIndex: number): string {
+function renderChildField(child: TrackerBoardField, childIndex: number, sectionIndex: number, fieldIndex: number): string {
   return `
-    <div class="scenemap-layout-child-row">
-      <div class="scenemap-native-select" data-layout-select="child-path" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>
-      <input data-layout-input="child-label" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}" value="${escapeAttr(child.label ?? "")}" placeholder="Label">
-      <div class="scenemap-native-select" data-layout-select="child-display" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>
-      ${iconButton("move-child-up", "Move up", "up", { section: sectionIndex, field: fieldIndex, child: childIndex, disabled: childIndex === 0 })}
-      ${iconButton("move-child-down", "Move down", "down", { section: sectionIndex, field: fieldIndex, child: childIndex, disabled: childIndex >= childCount - 1 })}
-      ${iconButton("remove-child", "Remove card field", "trash", { section: sectionIndex, field: fieldIndex, child: childIndex })}
+    <div class="scenemap-layout-child" data-layout-child-item>
+      <div class="scenemap-layout-child-row">
+        ${layoutDragHandle("child", "Drag to reorder card field", { section: sectionIndex, field: fieldIndex, child: childIndex })}
+        <div class="scenemap-native-select" data-layout-select="child-path" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>
+        <input data-layout-input="child-label" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}" value="${escapeAttr(child.label ?? "")}" placeholder="Label">
+        <div class="scenemap-native-select" data-layout-select="child-display" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>
+        ${iconButton("remove-child", "Remove card field", "trash", { section: sectionIndex, field: fieldIndex, child: childIndex })}
+      </div>
+      ${renderChipCenterToggle("child-center", child.center === true, { section: sectionIndex, field: fieldIndex, child: childIndex }, child.display === "chips")}
     </div>
-    ${renderChipCenterToggle("child-center", child.center === true, { section: sectionIndex, field: fieldIndex, child: childIndex }, child.display === "chips")}
   `;
 }
 
@@ -1578,6 +1589,106 @@ function mountLayoutSelects(
     }));
   }
   return handles;
+}
+
+type LayoutDragKind = "section" | "field" | "child";
+
+function mountLayoutSortables(
+  root: HTMLElement,
+  layout: TrackerBoardDisplayLayout,
+  redraw: (preserveScroll?: boolean) => void,
+): Sortable[] {
+  const instances: Sortable[] = [];
+  for (const container of root.querySelectorAll<HTMLElement>("[data-layout-sortable]")) {
+    const kind = container.dataset.layoutSortable as LayoutDragKind | undefined;
+    if (!kind) continue;
+    const sectionIndex = readIndex(container.dataset.section);
+    const fieldIndex = readIndex(container.dataset.field);
+    const draggable = kind === "section"
+      ? "> [data-layout-section-item]"
+      : kind === "field"
+        ? "> [data-layout-field-item]"
+        : "> [data-layout-child-item]";
+    instances.push(Sortable.create(container, {
+      draggable,
+      handle: `.scenemap-layout-drag-handle[data-layout-drag="${kind}"]`,
+      direction: "vertical",
+      animation: 170,
+      easing: "cubic-bezier(0.2, 0, 0, 1)",
+      delay: 200,
+      delayOnTouchOnly: true,
+      touchStartThreshold: 5,
+      fallbackTolerance: 4,
+      forceFallback: true,
+      fallbackOnBody: true,
+      scroll: true,
+      bubbleScroll: true,
+      scrollSensitivity: 48,
+      scrollSpeed: 12,
+      ghostClass: "scenemap-layout-drag-ghost",
+      chosenClass: "scenemap-layout-drag-chosen",
+      dragClass: "scenemap-layout-drag-active",
+      fallbackClass: "scenemap-layout-drag-fallback",
+      onStart: (event) => {
+        document.body.classList.add("scenemap-layout-is-dragging");
+        event.item.querySelector<HTMLElement>(".scenemap-layout-drag-handle")?.setAttribute("aria-grabbed", "true");
+      },
+      onEnd: (event) => {
+        document.body.classList.remove("scenemap-layout-is-dragging");
+        event.item.querySelector<HTMLElement>(".scenemap-layout-drag-handle")?.setAttribute("aria-grabbed", "false");
+        if (event.oldIndex === undefined || event.newIndex === undefined || event.oldIndex === event.newIndex) return;
+        if (!reorderLayoutItem(layout, kind, event.oldIndex, event.newIndex, sectionIndex, fieldIndex)) {
+          queueMicrotask(() => redraw());
+          return;
+        }
+        queueMicrotask(() => redraw());
+      },
+      onUnchoose: () => {
+        document.body.classList.remove("scenemap-layout-is-dragging");
+      },
+    }));
+  }
+  return instances;
+}
+
+function destroyLayoutSortables(instances: Sortable[]) {
+  document.body.classList.remove("scenemap-layout-is-dragging");
+  for (const instance of instances) instance.destroy();
+}
+
+function reorderLayoutItem(
+  layout: TrackerBoardDisplayLayout,
+  kind: LayoutDragKind,
+  from: number,
+  to: number,
+  sectionIndex: number | null,
+  fieldIndex: number | null,
+): boolean {
+  if (kind === "section") return moveItem(layout.sections, from, to);
+  if (sectionIndex === null) return false;
+  const section = layout.sections[sectionIndex];
+  if (!section) return false;
+  if (kind === "field") return moveItem(section.fields, from, to);
+  if (fieldIndex === null) return false;
+  const children = section.fields[fieldIndex]?.fields;
+  return children ? moveItem(children, from, to) : false;
+}
+
+function focusLayoutDragHandle(
+  root: HTMLElement,
+  kind: LayoutDragKind,
+  itemIndex: number,
+  sectionIndex: number | null,
+  fieldIndex: number | null,
+) {
+  const selector = kind === "section"
+    ? `[data-layout-drag="section"][data-section="${itemIndex}"]`
+    : kind === "field" && sectionIndex !== null
+      ? `[data-layout-drag="field"][data-section="${sectionIndex}"][data-field="${itemIndex}"]`
+      : kind === "child" && sectionIndex !== null && fieldIndex !== null
+        ? `[data-layout-drag="child"][data-section="${sectionIndex}"][data-field="${fieldIndex}"][data-child="${itemIndex}"]`
+        : "";
+  if (selector) queueMicrotask(() => root.querySelector<HTMLElement>(selector)?.focus());
 }
 
 function extractSchemaFieldOptions(schema: Record<string, unknown>): SchemaFieldOption[] {
@@ -1773,10 +1884,11 @@ function cloneLayout(layout: TrackerBoardDisplayLayout): TrackerBoardDisplayLayo
   return JSON.parse(JSON.stringify(layout)) as TrackerBoardDisplayLayout;
 }
 
-function moveItem<T>(items: T[], from: number, to: number) {
-  if (to < 0 || to >= items.length || from === to) return;
+function moveItem<T>(items: T[], from: number, to: number): boolean {
+  if (from < 0 || from >= items.length || to < 0 || to >= items.length || from === to) return false;
   const [item] = items.splice(from, 1);
   items.splice(to, 0, item);
+  return true;
 }
 
 function readIndex(value: string | undefined): number | null {
@@ -1804,21 +1916,34 @@ function validateLayout(layout: TrackerBoardDisplayLayout) {
   }
 }
 
-function iconButton(action: string, label: string, icon: "up" | "down" | "trash", options: { section?: number; field?: number; child?: number; disabled?: boolean }): string {
+function layoutDragHandle(
+  kind: LayoutDragKind,
+  label: string,
+  indexes: { section: number; field?: number; child?: number },
+): string {
+  const data = [
+    `data-layout-drag="${kind}"`,
+    `data-section="${indexes.section}"`,
+    indexes.field !== undefined ? `data-field="${indexes.field}"` : "",
+    indexes.child !== undefined ? `data-child="${indexes.child}"` : "",
+  ].filter(Boolean).join(" ");
+  return `<button type="button" class="scenemap-layout-drag-handle" title="${escapeAttr(label)}" aria-label="${escapeAttr(`${label}. Use arrow keys to reorder.`)}" aria-grabbed="false" ${data}>${layoutIcon("grip")}</button>`;
+}
+
+function iconButton(action: string, label: string, icon: "trash", options: { section?: number; field?: number; child?: number }): string {
   const data = [
     `data-layout-action="${action}"`,
     options.section !== undefined ? `data-section="${options.section}"` : "",
     options.field !== undefined ? `data-field="${options.field}"` : "",
     options.child !== undefined ? `data-child="${options.child}"` : "",
   ].filter(Boolean).join(" ");
-  return `<button type="button" class="scenemap-layout-icon-btn" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}" ${data} ${options.disabled ? "disabled" : ""}>${layoutIcon(icon)}</button>`;
+  return `<button type="button" class="scenemap-layout-icon-btn" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}" ${data}>${layoutIcon(icon)}</button>`;
 }
 
-function layoutIcon(name: "plus" | "up" | "down" | "trash"): string {
-  const paths: Record<"plus" | "up" | "down" | "trash", string> = {
+function layoutIcon(name: "plus" | "grip" | "trash"): string {
+  const paths: Record<"plus" | "grip" | "trash", string> = {
     plus: `<path d="M12 5v14"/><path d="M5 12h14"/>`,
-    up: `<path d="m18 15-6-6-6 6"/>`,
-    down: `<path d="m6 9 6 6 6-6"/>`,
+    grip: `<circle cx="9" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="19" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="19" r="1" fill="currentColor" stroke="none"/>`,
     trash: `<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v5"/><path d="M14 11v5"/>`,
   };
   return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
@@ -2201,13 +2326,13 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-layout-intro { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
 .scenemap-layout-sections { display: flex; flex-direction: column; gap: 12px; max-height: min(58vh, 520px); overflow: auto; padding-right: 4px; }
 .scenemap-layout-section { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: var(--lumiverse-radius, 8px); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-.scenemap-layout-section-header { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 10px; align-items: end; }
+.scenemap-layout-section-header { display: grid; grid-template-columns: auto minmax(180px, 1fr) auto; gap: 8px; align-items: end; }
 .scenemap-layout-section label, .scenemap-layout-field label { display: flex; flex-direction: column; gap: 5px; color: var(--lumiverse-text-muted); font-size: 12px; }
 .scenemap-layout-section label.scenemap-layout-check-row, .scenemap-layout-field label.scenemap-layout-check-row { display: inline-flex; flex-direction: row; align-items: center; gap: 7px; margin: 0; }
 .scenemap-layout-check-row input { width: auto !important; margin: 0; }
 .scenemap-layout-fields { display: flex; flex-direction: column; gap: 7px; }
 .scenemap-layout-field { display: flex; flex-direction: column; gap: 8px; }
-.scenemap-layout-field-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto auto auto; gap: 6px; align-items: center; }
+.scenemap-layout-field-row { display: grid; grid-template-columns: auto minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto; gap: 6px; align-items: center; }
 .scenemap-layout-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .scenemap-layout-actions button, .scenemap-layout-child-row button { padding: 5px 8px; font-size: 12px; }
 .scenemap-layout-icon-btn { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
@@ -2216,7 +2341,20 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-layout-child-box { border-top: 1px solid var(--lumiverse-border); padding-top: 9px; display: flex; flex-direction: column; gap: 7px; }
 .scenemap-layout-child-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .scenemap-layout-child-header strong { font-size: 12px; color: var(--lumiverse-text-muted); text-transform: uppercase; }
-.scenemap-layout-child-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto auto auto; gap: 6px; align-items: center; }
+.scenemap-layout-child-list { display: flex; flex-direction: column; gap: 7px; }
+.scenemap-layout-child { display: flex; flex-direction: column; gap: 7px; }
+.scenemap-layout-child-row { display: grid; grid-template-columns: auto minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto; gap: 6px; align-items: center; }
+.scenemap-layout-editor .scenemap-layout-drag-handle, .scenemap-layout-drag-fallback .scenemap-layout-drag-handle { width: 36px; height: 36px; min-width: 36px; display: inline-flex; align-items: center; justify-content: center; align-self: end; padding: 0; color: var(--lumiverse-text-dim); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.scenemap-layout-drag-handle svg { width: 18px; height: 18px; pointer-events: none; }
+.scenemap-layout-editor .scenemap-layout-drag-handle:hover, .scenemap-layout-editor .scenemap-layout-drag-handle:focus-visible { color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
+.scenemap-layout-editor .scenemap-layout-drag-handle[aria-grabbed="true"] { cursor: grabbing; color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
+.scenemap-layout-drag-ghost { opacity: .24 !important; }
+.scenemap-layout-drag-chosen { border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))) !important; }
+.scenemap-layout-drag-active, .scenemap-layout-drag-fallback { opacity: .96 !important; box-shadow: 0 12px 30px rgba(0, 0, 0, .28); }
+.scenemap-layout-drag-fallback { pointer-events: none !important; z-index: 10020 !important; }
+.scenemap-layout-drag-fallback input:not([type="checkbox"]) { width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius-sm, 5px); background: var(--lumiverse-secondary, rgba(128, 128, 128, .15)); color: var(--lumiverse-text); padding: 7px 9px; font: inherit; }
+.scenemap-layout-drag-fallback button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: var(--lumiverse-radius-sm, 5px); font: inherit; }
+body.scenemap-layout-is-dragging, body.scenemap-layout-is-dragging * { cursor: grabbing !important; user-select: none !important; -webkit-user-select: none !important; }
 .scenemap-lv button, .scenemap-editor button, .scenemap-layout-editor button, .scenemap-name-editor button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: var(--lumiverse-radius-sm, 5px); padding: 7px 10px; cursor: pointer; font: inherit; }
 .scenemap-lv button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-layout-editor button:hover:not(:disabled), .scenemap-name-editor button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
 .scenemap-lv button:disabled, .scenemap-editor button:disabled, .scenemap-layout-editor button:disabled, .scenemap-name-editor button:disabled { opacity: 0.45; cursor: default; }
@@ -2229,16 +2367,20 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-tracker-action { min-height: 30px; padding: 5px 10px !important; font-size: calc(12px * var(--lumiverse-font-scale, 1)); }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: var(--lumiverse-radius, 8px); padding: 10px; font-size: 12px; }
 @media (max-width: 760px) {
-  .scenemap-layout-section-header { grid-template-columns: 1fr; align-items: stretch; }
-  .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: repeat(3, 36px) 1fr; align-items: center; }
-  .scenemap-layout-field-row > [data-layout-select]:nth-child(1),
-  .scenemap-layout-field-row > input:nth-child(2),
-  .scenemap-layout-field-row > [data-layout-select]:nth-child(3),
-  .scenemap-layout-child-row > [data-layout-select]:nth-child(1),
-  .scenemap-layout-child-row > input:nth-child(2),
-  .scenemap-layout-child-row > [data-layout-select]:nth-child(3) { grid-column: 1 / -1; }
+  .scenemap-layout-section-header { grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: end; }
+  .scenemap-layout-section-header .scenemap-layout-actions { grid-column: 3; }
+  .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; }
+  .scenemap-layout-editor .scenemap-layout-drag-handle { width: 44px; height: 44px; min-width: 44px; grid-column: 1; grid-row: 1; }
+  .scenemap-layout-field-row > [data-layout-select="field-path"],
+  .scenemap-layout-child-row > [data-layout-select="child-path"] { grid-column: 2; grid-row: 1; }
+  .scenemap-layout-field-row > .scenemap-layout-icon-btn,
+  .scenemap-layout-child-row > .scenemap-layout-icon-btn { grid-column: 3; grid-row: 1; width: 44px; height: 44px; }
+  .scenemap-layout-field-row > input,
+  .scenemap-layout-child-row > input { grid-column: 1 / -1; grid-row: 2; }
+  .scenemap-layout-field-row > [data-layout-select="field-display"],
+  .scenemap-layout-child-row > [data-layout-select="child-display"] { grid-column: 1 / -1; grid-row: 3; }
   .scenemap-settings-actions-left { justify-content: flex-start; }
-  .scenemap-layout-actions { justify-content: flex-start; }
+  .scenemap-layout-actions { justify-content: flex-end; }
   .scenemap-layout-intro { align-items: stretch; flex-direction: column; }
 }
 @keyframes scenemap-status-pulse {
