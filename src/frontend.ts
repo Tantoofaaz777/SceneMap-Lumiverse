@@ -422,10 +422,29 @@ function renderDrawerContent() {
   if (mergeSettings(state.settings).trackerPlacement === "drawer" && drawerView === "tracker") {
     destroySelectHandles(drawerSelectHandles);
     drawerSelectHandles = [];
-    rootRef.innerHTML = drawerPageMarkup(trackerPanelMarkup());
+    renderDrawerPage(trackerPanelMarkup());
     return;
   }
   renderDrawerSettings();
+}
+
+function renderDrawerPage(content: string) {
+  if (!rootRef) return;
+  let page = rootRef.firstElementChild;
+  if (!(page instanceof HTMLElement) || !page.classList.contains("scenemap-drawer-scroll")) {
+    rootRef.innerHTML = drawerPageMarkup("");
+    page = rootRef.firstElementChild;
+  }
+  if (!(page instanceof HTMLElement)) return;
+  const trackerActive = drawerView === "tracker";
+  const trackerTab = page.querySelector<HTMLElement>("[data-action=\"show-tracker\"]");
+  const settingsTab = page.querySelector<HTMLElement>("[data-action=\"show-settings\"]");
+  trackerTab?.classList.toggle("is-active", trackerActive);
+  trackerTab?.setAttribute("aria-selected", String(trackerActive));
+  settingsTab?.classList.toggle("is-active", !trackerActive);
+  settingsTab?.setAttribute("aria-selected", String(!trackerActive));
+  const view = page.querySelector<HTMLElement>(".scenemap-drawer-view");
+  if (view) view.innerHTML = content;
 }
 
 function drawerPageMarkup(content: string): string {
@@ -565,7 +584,8 @@ function renderDrawerSettings() {
       </section>
     </div>
   `;
-  rootRef.innerHTML = drawerTrackerMode ? drawerPageMarkup(settingsMarkup) : settingsMarkup;
+  if (drawerTrackerMode) renderDrawerPage(settingsMarkup);
+  else rootRef.innerHTML = settingsMarkup;
   mountSettingsSelects(settings);
 }
 
@@ -2056,8 +2076,8 @@ const styles = `
 .scenemap-drawer-view > .scenemap-shell { flex: none; min-height: 0; overflow: visible; padding: 14px 0 0; }
 .scenemap-drawer-view .scenemap-board, .scenemap-drawer-view .scenemap-settings-scroll { flex: none; overflow: visible; }
 .scenemap-drawer-view .scenemap-settings-scroll { padding-right: 0; padding-bottom: 0; }
-.scenemap-view-tabs { display: flex; gap: 2px; width: 100%; box-sizing: border-box; padding: 3px; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius-md, 10px); background: var(--lumiverse-fill-subtle); }
-.scenemap-lv .scenemap-view-tabs button { flex: 1 1 0; min-width: 0; padding: 7px 10px; border: 1px solid transparent; border-radius: var(--lumiverse-radius, 8px); background: transparent; color: var(--lumiverse-text-dim); font-size: calc(12px * var(--lumiverse-font-scale, 1)); font-weight: 500; text-align: center; transition: color var(--lumiverse-transition-fast, .15s ease), background var(--lumiverse-transition-fast, .15s ease), border-color var(--lumiverse-transition-fast, .15s ease); }
+.scenemap-view-tabs { display: flex; gap: 2px; width: calc(100% - 16px); box-sizing: border-box; margin: 0 auto; padding: 2px; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius-md, 10px); background: var(--lumiverse-fill-subtle); }
+.scenemap-lv .scenemap-view-tabs button { flex: 1 1 0; min-width: 0; padding: 5px 8px; border: 1px solid transparent; border-radius: var(--lumiverse-radius, 8px); background: transparent; color: var(--lumiverse-text-dim); font-size: calc(11px * var(--lumiverse-font-scale, 1)); font-weight: 500; line-height: 1.2; text-align: center; transition: color var(--lumiverse-transition-fast, .15s ease), border-color var(--lumiverse-transition-fast, .15s ease); }
 .scenemap-lv .scenemap-view-tabs button:hover:not(:disabled) { color: var(--lumiverse-text-muted); background: var(--lumiverse-fill-subtle); border-color: transparent; }
 .scenemap-lv .scenemap-view-tabs button.is-active { color: var(--lumiverse-primary-text, var(--lumiverse-primary)); background: var(--lumiverse-primary-015, color-mix(in srgb, var(--lumiverse-primary) 15%, transparent)); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary)); box-shadow: var(--lumiverse-shadow-sm); }
 .scenemap-settings-shell { gap: 0; }
