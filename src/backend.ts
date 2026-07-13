@@ -391,8 +391,13 @@ async function buildActiveWorldInfo(chatId: string, userId: string): Promise<str
     const activated = await spindle.world_books.getActivated(chatId, userId);
     if (!activated.length) return [];
     const entries = await Promise.all(activated.map(async (entry: any) => {
-      const fullEntry = await spindle.world_books.entries.get(entry.id, userId);
-      return compactText(fullEntry?.content);
+      try {
+        const fullEntry = await spindle.world_books.entries.get(entry.id, userId);
+        return compactText(fullEntry?.content);
+      } catch (error) {
+        spindle.log.warn(`SceneMap could not read active world info entry ${String(entry.id)}: ${(error as Error).message}`);
+        return "";
+      }
     }));
     return entries.filter(Boolean);
   } catch (error) {

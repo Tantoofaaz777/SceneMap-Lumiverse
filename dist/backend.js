@@ -2177,8 +2177,13 @@ async function buildActiveWorldInfo(chatId, userId) {
     if (!activated.length)
       return [];
     const entries = await Promise.all(activated.map(async (entry) => {
-      const fullEntry = await spindle.world_books.entries.get(entry.id, userId);
-      return compactText(fullEntry?.content);
+      try {
+        const fullEntry = await spindle.world_books.entries.get(entry.id, userId);
+        return compactText(fullEntry?.content);
+      } catch (error) {
+        spindle.log.warn(`SceneMap could not read active world info entry ${String(entry.id)}: ${error.message}`);
+        return "";
+      }
     }));
     return entries.filter(Boolean);
   } catch (error) {
