@@ -52,6 +52,8 @@ let settingsSaveRequestSeq = 0;
 let automaticSaveRequestSeq = 0;
 let drawerSelectHandles: SpindleSelectHandle[] = [];
 let automaticSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let drawerView: "tracker" | "settings" = "settings";
+let appliedTrackerPlacement: SceneMapSettings["trackerPlacement"] | null = null;
 
 type AutomaticallySavedSetting =
   | "connectionId"
@@ -61,7 +63,8 @@ type AutomaticallySavedSetting =
   | "temperature"
   | "topP"
   | "includeLastXMessages"
-  | "showInputBarButton";
+  | "showInputBarButton"
+  | "trackerPlacement";
 
 type PresetEditorDraft = {
   schemaText: string;
@@ -104,10 +107,10 @@ export function setup(ctx: SpindleFrontendContext) {
   tabHandle = tab;
   rootRef = tab.root;
   rootRef.classList.add("scenemap-lv");
-  ensureDockPanel();
+  syncTrackerPlacement();
   const offTabActivate = tab.onActivate(() => {
-    ensureDockPanel();
-    renderDrawerSettings();
+    syncTrackerPlacement();
+    renderDrawerContent();
   });
   const toolbarRoot = ctx.ui.mount("chat_toolbar");
   toolbarRootRef = toolbarRoot;
@@ -140,7 +143,7 @@ export function setup(ctx: SpindleFrontendContext) {
       const saveFailed = typeof payload.requestId === "string" && settingsDraft.fail(payload.requestId);
       const automaticSaveFailed = typeof payload.requestId === "string" && automaticSettingsDraft.fail(payload.requestId);
       if (typeof payload.requestId === "string") takePendingTextEditor(payload.requestId);
-      renderDrawerSettings();
+      renderDrawerContent();
       renderDockPanel();
       renderChatToolbar();
       if (saveFailed || automaticSaveFailed) {
@@ -188,9 +191,7 @@ export function setup(ctx: SpindleFrontendContext) {
     destroySelectHandles(drawerSelectHandles);
     drawerSelectHandles = [];
     tab.destroy();
-    dockPanelHandle?.destroy();
-    dockResizeObserver?.disconnect();
-    cleanupDockResizeHandles();
+    destroyDockPanel();
     removeStyle();
     ctx.dom.cleanup();
     ctxRef = null;
@@ -198,10 +199,8 @@ export function setup(ctx: SpindleFrontendContext) {
     dockRootRef = null;
     toolbarRootRef = null;
     tabHandle = null;
-    dockPanelHandle = null;
-    dockResizeObserver = null;
-    dockPanelCreatedAt = 0;
-    dockPanelError = null;
+    appliedTrackerPlacement = null;
+    drawerView = "settings";
     isGenerationRequestPending = false;
     settingsDraft.reset();
     presetEditorDrafts.clear();
@@ -212,7 +211,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
 function ensureDockPanel() {
   const ctx = ctxRef;
-  if (!ctx) return;
+  if (!ctx || mergeSettings(state.settings).trackerPlacement !== "dock") return;
   if (dockRootRef && dockPanelHandle && (dockRootRef.isConnected || Date.now() - dockPanelCreatedAt < 1000)) return;
   dockRootRef?.removeEventListener("click", handleClick);
   cleanupDockResizeHandles();
@@ -242,6 +241,29 @@ function ensureDockPanel() {
   dockRootRef.addEventListener("click", handleClick);
   renderDockPanel();
   watchDockResizeHandle();
+}
+
+function destroyDockPanel() {
+  dockRootRef?.removeEventListener("click", handleClick);
+  dockResizeObserver?.disconnect();
+  cleanupDockResizeHandles();
+  dockPanelHandle?.destroy();
+  dockRootRef = null;
+  dockPanelHandle = null;
+  dockResizeObserver = null;
+  dockPanelCreatedAt = 0;
+  dockPanelError = null;
+}
+
+function syncTrackerPlacement() {
+  const placement = mergeSettings(state.settings).trackerPlacement;
+  if (placement !== appliedTrackerPlacement) {
+    drawerView = placement === "drawer" ? "tracker" : "settings";
+    appliedTrackerPlacement = placement;
+  }
+  tabHandle?.setTitle(placement === "drawer" ? "SceneMap" : "SceneMap Settings");
+  if (placement === "drawer") destroyDockPanel();
+  else ensureDockPanel();
 }
 
 function watchDockResizeHandle() {
@@ -349,16 +371,24 @@ function send(payload: Record<string, unknown>) {
 function requestState(showRefresh = false) {
   if (showRefresh) {
     isRefreshingState = true;
-    renderDockPanel();
+    renderTrackerSurfaces();
   }
   send({ type: "get_state" });
 }
 
 function render() {
+  syncTrackerPlacement();
   renderDockPanel();
-  renderDrawerSettings();
+  renderDrawerContent();
   renderChatToolbar();
   tabHandle?.setBadge(state.messagesBehind > 0 ? String(state.messagesBehind) : null);
+}
+
+function renderTrackerSurfaces() {
+  renderDockPanel();
+  if (mergeSettings(state.settings).trackerPlacement === "drawer" && drawerView === "tracker") {
+    renderDrawerContent();
+  }
 }
 
 function renderChatToolbar() {
@@ -386,13 +416,28 @@ function renderChatToolbar() {
 
 function renderDockPanel() {
   if (!dockRootRef) return;
+  dockRootRef.innerHTML = trackerPanelMarkup();
+}
+
+function renderDrawerContent() {
+  if (!rootRef) return;
+  if (mergeSettings(state.settings).trackerPlacement === "drawer" && drawerView === "tracker") {
+    destroySelectHandles(drawerSelectHandles);
+    drawerSelectHandles = [];
+    rootRef.innerHTML = trackerPanelMarkup();
+    return;
+  }
+  renderDrawerSettings();
+}
+
+function trackerPanelMarkup(): string {
   const settings = mergeSettings(state.settings);
   const latest = state.latest;
   const trackerValue = latest?.displayData ?? latest?.data;
   const layout = latest && !latest.schemaMatchesCurrent
     ? createTrackerDataLayout(trackerValue)
     : getPresetLayout(settings, state.effectivePresetKey);
-  dockRootRef.innerHTML = `
+  return `
     <div class="scenemap-shell">
       <header class="scenemap-header">
         <button class="scenemap-pill-action scenemap-primary" data-action="generate" ${state.activeMessageId && !isGenerationRequestPending ? "" : "disabled"}>
@@ -422,8 +467,10 @@ function renderDrawerSettings() {
   const canDeletePreset = settings.schemaPreset !== "default" && presetKeys.length > 1;
   const activePreset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   const presetDraft = getPresetEditorDraft(settings, settings.schemaPreset);
+  const drawerTrackerMode = settings.trackerPlacement === "drawer";
   rootRef.innerHTML = `
     <div class="scenemap-shell scenemap-settings-shell">
+      ${drawerTrackerMode ? `<div class="scenemap-settings-nav"><button class="scenemap-pill-action" data-action="back-to-tracker">&larr; Tracker</button></div>` : ""}
       <p class="scenemap-settings-dirty" data-settings-dirty ${settingsDraft.dirty ? "" : "hidden"}>Unsaved preset changes</p>
       ${dockPanelError ? `<div class="scenemap-runtime-error">${escapeHtml(dockPanelError)}</div>` : ""}
       <section class="scenemap-settings-scroll">
@@ -465,6 +512,10 @@ function renderDrawerSettings() {
         </div>
         <div class="scenemap-settings-group">
           <h3>Interface</h3>
+          <label>
+            <span>Tracker location</span>
+            <div class="scenemap-native-select" data-native-setting="trackerPlacement"></div>
+          </label>
           <label class="scenemap-switch-row">
             <span>Show input bar button</span>
             <input type="checkbox" data-setting="showInputBarButton" ${settings.showInputBarButton ? "checked" : ""}>
@@ -511,7 +562,7 @@ function renderDrawerSettings() {
 function mountSettingsSelects(settings: SceneMapSettings) {
   if (!ctxRef || !rootRef) return;
   const mount = (
-    key: "connectionId" | "includeLastXMessages" | "schemaPreset",
+    key: "connectionId" | "includeLastXMessages" | "schemaPreset" | "trackerPlacement",
     options: SpindleSelectOption[],
     value: string,
     extra: Partial<Parameters<SpindleFrontendContext["components"]["mountSelect"]>[1]> = {},
@@ -522,7 +573,13 @@ function mountSettingsSelects(settings: SceneMapSettings) {
       options,
       value,
       portal: true,
-      ariaLabel: key === "connectionId" ? "Connection" : key === "schemaPreset" ? "Global preset" : "Include last messages",
+      ariaLabel: key === "connectionId"
+        ? "Connection"
+        : key === "schemaPreset"
+          ? "Global preset"
+          : key === "trackerPlacement"
+            ? "Tracker location"
+            : "Include last messages",
       onChange: (nextValue) => updateNativeSetting(key, nextValue),
       ...extra,
     }));
@@ -553,6 +610,15 @@ function mountSettingsSelects(settings: SceneMapSettings) {
     { searchThreshold: Number.MAX_SAFE_INTEGER },
   );
   mount(
+    "trackerPlacement",
+    [
+      { value: "dock", label: "Dock panel" },
+      { value: "drawer", label: "Drawer" },
+    ],
+    settings.trackerPlacement,
+    { searchThreshold: Number.MAX_SAFE_INTEGER },
+  );
+  mount(
     "schemaPreset",
     Object.entries(settings.schemaPresets).map(([key, preset]) => ({ value: key, label: preset.name })),
     settings.schemaPreset,
@@ -560,9 +626,13 @@ function mountSettingsSelects(settings: SceneMapSettings) {
   );
 }
 
-function updateNativeSetting(key: "connectionId" | "includeLastXMessages" | "schemaPreset", value: string) {
+function updateNativeSetting(
+  key: "connectionId" | "includeLastXMessages" | "schemaPreset" | "trackerPlacement",
+  value: string,
+) {
   const settings = mergeSettings(state.settings);
   if (key === "includeLastXMessages") settings.includeLastXMessages = Math.max(0, Math.floor(Number(value) || 0));
+  else if (key === "trackerPlacement") settings.trackerPlacement = value === "drawer" ? "drawer" : "dock";
   else settings[key] = value;
   if (key === "schemaPreset") {
     updateSettingsDraft(settings);
@@ -571,6 +641,7 @@ function updateNativeSetting(key: "connectionId" | "includeLastXMessages" | "sch
   }
   state = { ...state, settings };
   queueAutomaticSettingsSave(settings, key, true);
+  if (key === "trackerPlacement") queueMicrotask(() => render());
 }
 
 function queueAutomaticSettingsSave(settings: SceneMapSettings, key: AutomaticallySavedSetting, immediate: boolean) {
@@ -625,14 +696,19 @@ function handleClick(event: Event) {
   if (!button) return;
   const action = button.dataset.action;
   if (action === "open-settings") {
+    drawerView = "settings";
     tabHandle?.activate();
     renderDrawerSettings();
+  }
+  if (action === "back-to-tracker" && mergeSettings(state.settings).trackerPlacement === "drawer") {
+    drawerView = "tracker";
+    renderDrawerContent();
   }
   if (action === "refresh") requestState(true);
   if (action === "generate") {
     if (isGenerationRequestPending) return;
     isGenerationRequestPending = true;
-    renderDockPanel();
+    renderTrackerSurfaces();
     renderChatToolbar();
     send({ type: "generate_tracker" });
   }
@@ -670,6 +746,7 @@ function revealUnsavedSettings() {
   const indicator = rootRef?.querySelector<HTMLElement>("[data-settings-dirty]");
   if (indicator) indicator.hidden = false;
   dockRootRef?.querySelector<HTMLElement>("[data-action=\"open-settings\"]")?.classList.add("has-unsaved-settings");
+  rootRef?.querySelector<HTMLElement>("[data-action=\"open-settings\"]")?.classList.add("has-unsaved-settings");
 }
 
 function getPresetEditorDraft(settings: SceneMapSettings, key: string): PresetEditorDraft {
@@ -815,7 +892,8 @@ function isAutomaticallySavedSetting(key: string | undefined): key is Automatica
     || key === "temperature"
     || key === "topP"
     || key === "includeLastXMessages"
-    || key === "showInputBarButton";
+    || key === "showInputBarButton"
+    || key === "trackerPlacement";
 }
 
 function updateSettingFromControl(
@@ -828,6 +906,8 @@ function updateSettingFromControl(
     settings.autoGenerateAiTrackers = (target as HTMLInputElement).checked;
   } else if (key === "showInputBarButton") {
     settings.showInputBarButton = (target as HTMLInputElement).checked;
+  } else if (key === "trackerPlacement") {
+    settings.trackerPlacement = target.value === "drawer" ? "drawer" : "dock";
   } else if (key === "autoGenerateInterval") {
     settings.autoGenerateInterval = Math.max(1, Math.floor(Number(target.value) || 1));
   } else if (key === "temperature" || key === "topP") {
@@ -846,6 +926,7 @@ function updateSettingFromControl(
     if (intervalField) intervalField.hidden = !settings.autoGenerateAiTrackers;
   }
   if (key === "showInputBarButton") renderChatToolbar();
+  if (key === "trackerPlacement") render();
 }
 
 function createPreset() {
@@ -1702,7 +1783,8 @@ function handleTextEditorResult(payload: any) {
 }
 
 function showInlineError(message: string) {
-  prependRuntimeError(dockRootRef, message);
+  const trackerRoot = mergeSettings(state.settings).trackerPlacement === "drawer" ? rootRef : dockRootRef;
+  prependRuntimeError(trackerRoot, message);
 }
 
 function takePendingTextEditor(requestId: string): PendingTextEditor | null {
@@ -1722,6 +1804,7 @@ function prependRuntimeError(root: HTMLElement | null, message: string) {
 }
 
 function showSettingsError(message: string) {
+  drawerView = "settings";
   tabHandle?.activate();
   renderDrawerSettings();
   prependRuntimeError(rootRef, message);
@@ -1962,6 +2045,8 @@ const styles = `
 .scenemap-character { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: 8px; padding: 10px; }
 .scenemap-character h4 { margin: 0 0 10px; color: color-mix(in srgb, var(--lumiverse-text) 72%, var(--lumiverse-primary, var(--lumiverse-accent)) 28%); font-size: 14px; font-weight: 760; }
 .scenemap-settings-shell { gap: 0; }
+.scenemap-settings-nav { display: flex; flex: 0 0 auto; padding: 0 0 10px; border-bottom: 1px solid var(--lumiverse-border); }
+.scenemap-settings-nav + .scenemap-settings-dirty[hidden] + .scenemap-settings-scroll { padding-top: 12px; }
 .scenemap-settings-dirty { flex: 0 0 auto; margin: 0; padding: 0 0 10px; border-bottom: 1px solid var(--lumiverse-border); color: var(--lumiverse-warning, var(--lumiverse-accent)); font-size: 11px; }
 .scenemap-settings-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px 8px 12px 0; }
 .scenemap-settings-group { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }

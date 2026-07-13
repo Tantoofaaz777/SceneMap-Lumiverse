@@ -154,6 +154,7 @@ var defaultSettings = {
   autoGenerateAiTrackers: false,
   autoGenerateInterval: 1,
   showInputBarButton: true,
+  trackerPlacement: "dock",
   schemaPreset: "default",
   schemaPresets: {
     default: {
@@ -183,6 +184,7 @@ function mergeSettings(value) {
     ...currentValue,
     temperature: typeof currentValue.temperature === "number" && Number.isFinite(currentValue.temperature) ? currentValue.temperature : base.temperature,
     topP: typeof currentValue.topP === "number" && Number.isFinite(currentValue.topP) ? currentValue.topP : base.topP,
+    trackerPlacement: currentValue.trackerPlacement === "drawer" ? "drawer" : "dock",
     schemaPresets,
     displayLayout: currentValue.displayLayout?.sections?.length ? currentValue.displayLayout : base.displayLayout
   };
@@ -214,6 +216,9 @@ function mergeAutomaticSettingsPatch(currentValue, value) {
   }
   if (typeof patch.showInputBarButton === "boolean")
     next.showInputBarButton = patch.showInputBarButton;
+  if (patch.trackerPlacement === "dock" || patch.trackerPlacement === "drawer") {
+    next.trackerPlacement = patch.trackerPlacement;
+  }
   return mergeSettings(next);
 }
 function mergePresetSettings(currentValue, incomingValue) {

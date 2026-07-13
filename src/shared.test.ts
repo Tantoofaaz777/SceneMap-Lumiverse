@@ -144,6 +144,13 @@ describe("mergeSettings", () => {
     expect(settings.temperature).toBeNull();
     expect(settings.topP).toBeNull();
   });
+
+  test("defaults invalid tracker placement values to the dock", () => {
+    const settings = mergeSettings({ trackerPlacement: "floating" as "dock" });
+
+    expect(settings.trackerPlacement).toBe("dock");
+    expect(mergeSettings({ trackerPlacement: "drawer" }).trackerPlacement).toBe("drawer");
+  });
 });
 
 describe("split settings persistence", () => {
@@ -159,21 +166,24 @@ describe("split settings persistence", () => {
 
     const next = mergeAutomaticSettingsPatch(current, {
       temperature: 0.35,
+      trackerPlacement: "drawer",
       schemaPreset: "attacker-controlled",
       schemaPresets: {},
     });
 
     expect(next.temperature).toBe(0.35);
+    expect(next.trackerPlacement).toBe("drawer");
     expect(next.schemaPreset).toBe(current.schemaPreset);
     expect(next.schemaPresets).toEqual(current.schemaPresets);
   });
 
   test("saving a preset cannot overwrite automatic settings", () => {
-    const current = mergeSettings({ temperature: 0.4, showInputBarButton: false });
+    const current = mergeSettings({ temperature: 0.4, showInputBarButton: false, trackerPlacement: "drawer" });
     const incoming = mergeSettings({
       ...current,
       temperature: 1.8,
       showInputBarButton: true,
+      trackerPlacement: "dock",
       schemaPresets: {
         ...current.schemaPresets,
         default: {
@@ -187,6 +197,7 @@ describe("split settings persistence", () => {
 
     expect(next.temperature).toBe(0.4);
     expect(next.showInputBarButton).toBe(false);
+    expect(next.trackerPlacement).toBe("drawer");
     expect(next.schemaPresets.default.promptJson).toBe("Updated prompt");
   });
 });

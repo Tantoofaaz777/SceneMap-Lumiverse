@@ -39,6 +39,7 @@ export interface SceneMapSettings {
   autoGenerateAiTrackers: boolean;
   autoGenerateInterval: number;
   showInputBarButton: boolean;
+  trackerPlacement: "dock" | "drawer";
   schemaPreset: string;
   schemaPresets: Record<string, SceneMapPreset>;
   includeLastXMessages: number;
@@ -224,6 +225,7 @@ export const defaultSettings: SceneMapSettings = {
   autoGenerateAiTrackers: false,
   autoGenerateInterval: 1,
   showInputBarButton: true,
+  trackerPlacement: "dock",
   schemaPreset: "default",
   schemaPresets: {
     default: {
@@ -260,6 +262,7 @@ export function mergeSettings(value: Partial<SceneMapSettings> | null | undefine
     topP: typeof currentValue.topP === "number" && Number.isFinite(currentValue.topP)
       ? currentValue.topP
       : base.topP,
+    trackerPlacement: currentValue.trackerPlacement === "drawer" ? "drawer" : "dock",
     schemaPresets,
     displayLayout: currentValue.displayLayout?.sections?.length ? currentValue.displayLayout : base.displayLayout,
   };
@@ -288,6 +291,9 @@ export function mergeAutomaticSettingsPatch(currentValue: SceneMapSettings, valu
     next.includeLastXMessages = Math.max(0, Math.floor(patch.includeLastXMessages));
   }
   if (typeof patch.showInputBarButton === "boolean") next.showInputBarButton = patch.showInputBarButton;
+  if (patch.trackerPlacement === "dock" || patch.trackerPlacement === "drawer") {
+    next.trackerPlacement = patch.trackerPlacement;
+  }
   return mergeSettings(next);
 }
 
