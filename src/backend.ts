@@ -663,7 +663,7 @@ async function generateTracker(userId?: string, expectedLatestMessageId?: string
       connection_id: settings.connectionId || undefined,
       userId,
       parameters: {
-        max_tokens: Math.max(1, Math.floor(settings.maxResponseTokens || 16000)),
+        max_tokens: Math.max(1, Math.floor(settings.maxResponseTokens)),
         temperature: resolveSamplingParameter(settings.temperature, 0, 2),
         top_p: resolveSamplingParameter(settings.topP, 0, 1),
       },

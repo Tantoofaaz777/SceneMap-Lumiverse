@@ -145,6 +145,27 @@ describe("mergeSettings", () => {
     expect(settings.topP).toBeNull();
   });
 
+  test("normalizes numeric settings to the values shown and sent", () => {
+    const settings = mergeSettings({
+      maxResponseTokens: 0,
+      temperature: 4,
+      topP: -1,
+    });
+
+    expect(settings.maxResponseTokens).toBe(1);
+    expect(settings.temperature).toBe(2);
+    expect(settings.topP).toBe(0);
+
+    const patched = mergeAutomaticSettingsPatch(settings, {
+      maxResponseTokens: 0,
+      temperature: -2,
+      topP: 3,
+    });
+    expect(patched.maxResponseTokens).toBe(1);
+    expect(patched.temperature).toBe(0);
+    expect(patched.topP).toBe(1);
+  });
+
   test("defaults invalid tracker placement values to the dock", () => {
     const settings = mergeSettings({ trackerPlacement: "floating" as "dock" });
 

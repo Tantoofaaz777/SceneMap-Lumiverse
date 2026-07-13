@@ -11,6 +11,7 @@ import {
   humanizeTrackerKey,
   jsonValuesEqual,
   mergeSettings,
+  schemaFingerprint,
   type SceneMapSettings,
   type SceneMapState,
   type TrackerBoardDisplayLayout,
@@ -42,10 +43,13 @@ let toolbarRootRef: Element | null = null;
 let tabHandle: ReturnType<SpindleFrontendContext["ui"]["registerDrawerTab"]> | null = null;
 let dockPanelHandle: ReturnType<SpindleFrontendContext["ui"]["requestDockPanel"]> | null = null;
 let dockResizeObserver: MutationObserver | null = null;
-let dockPanelSize = 380;
+let dockPanelWidth = 380;
+let dockPanelHeight = 380;
 const decoratedDockResizeHandles = new Set<HTMLElement>();
 let dockPanelCreatedAt = 0;
 let dockPanelError: string | null = null;
+let settingsRuntimeError: string | null = null;
+let trackerRuntimeError: string | null = null;
 let isGenerationRequestPending = false;
 let editorRequestSeq = 0;
 let settingsSaveRequestSeq = 0;
@@ -77,6 +81,7 @@ const presetEditorDrafts = new Map<string, PresetEditorDraft>();
 
 type PendingTextEditor = {
   title: string;
+  surface: "settings" | "tracker";
   onSave: (value: string) => void;
 };
 
@@ -89,12 +94,17 @@ const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" 
 export function setup(ctx: SpindleFrontendContext) {
   settingsDraft.reset();
   automaticSettingsDraft.reset();
+  presetEditorDrafts.clear();
   pendingTextEditors.clear();
+  settingsDraft.initialize(presetSettingsFingerprint(state.settings));
   if (automaticSaveTimer) clearTimeout(automaticSaveTimer);
   automaticSaveTimer = null;
   if (drawerScrollRestoreFrame !== null) cancelAnimationFrame(drawerScrollRestoreFrame);
   drawerScrollRestoreFrame = null;
-  dockPanelSize = readStoredDockPanelSize();
+  dockPanelWidth = readStoredDockPanelSize("width", 380);
+  dockPanelHeight = readStoredDockPanelSize("height", 380);
+  settingsRuntimeError = null;
+  trackerRuntimeError = null;
   ctxRef = ctx;
   const removeStyle = ctx.dom.addStyle(styles);
   const tab = ctx.ui.registerDrawerTab({
@@ -121,36 +131,49 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const offBackend = ctx.onBackendMessage((payload: any) => {
     if (payload?.type === "state") {
+      const preserveActiveSettings = settingsSurfaceHasActiveInteraction();
+      const previousState = state;
       isGenerationRequestPending = false;
       const incomingState = payload.state as SceneMapState;
+      if (!settingsDraft.initialized) settingsDraft.initialize(presetSettingsFingerprint(incomingState.settings));
       if (typeof payload.automaticSettingsSaveRequestId === "string") {
         automaticSettingsDraft.acknowledge(payload.automaticSettingsSaveRequestId);
+        clearSettingsRuntimeError();
       }
       if (typeof payload.settingsSaveRequestId === "string") {
         const acknowledged = settingsDraft.acknowledge(payload.settingsSaveRequestId);
+        clearSettingsRuntimeError();
         if (acknowledged && !settingsDraft.dirty) presetEditorDrafts.clear();
       }
       const baseSettings = settingsDraft.dirty ? state.settings : incomingState.settings;
-      state = {
+      const nextState: SceneMapState = {
         ...incomingState,
         settings: automaticSettingsDraft.overlay(baseSettings),
       };
-      render();
+      state = nextState;
+      if (!settingsDraft.dirty && !settingsDraft.saving) {
+        settingsDraft.synchronize(presetSettingsFingerprint(nextState.settings));
+      }
+      syncSettingsDraftUi();
+      render({
+        preserveSettingsSurface: preserveActiveSettings && settingsSurfaceStructureMatches(previousState, nextState),
+      });
       return;
     }
     if (payload?.type === "error") {
       isGenerationRequestPending = false;
       const saveFailed = typeof payload.requestId === "string" && settingsDraft.fail(payload.requestId);
       const automaticSaveFailed = typeof payload.requestId === "string" && automaticSettingsDraft.fail(payload.requestId);
-      if (typeof payload.requestId === "string") takePendingTextEditor(payload.requestId);
-      renderDrawerContent();
-      renderDockPanel();
+      const pendingEditor = typeof payload.requestId === "string" ? takePendingTextEditor(payload.requestId) : null;
+      syncSettingsDraftUi();
       renderChatToolbar();
       if (saveFailed || automaticSaveFailed) {
         tabHandle?.activate();
         showSettingsError(payload.message);
+      } else if (pendingEditor?.surface === "settings") {
+        showSettingsError(payload.message);
       } else {
-        showInlineError(payload.message);
+        showTrackerError(payload.message);
       }
     }
     if (payload?.type === "text_editor_result") {
@@ -175,6 +198,7 @@ export function setup(ctx: SpindleFrontendContext) {
   rootRef.addEventListener("click", handleClick);
   rootRef.addEventListener("change", handleChange);
   rootRef.addEventListener("input", handleInput);
+  rootRef.addEventListener("keydown", handleRootKeydown);
   toolbarRoot.addEventListener("click", handleClick);
   requestState();
 
@@ -183,6 +207,7 @@ export function setup(ctx: SpindleFrontendContext) {
     rootRef?.removeEventListener("click", handleClick);
     rootRef?.removeEventListener("change", handleChange);
     rootRef?.removeEventListener("input", handleInput);
+    rootRef?.removeEventListener("keydown", handleRootKeydown);
     dockRootRef?.removeEventListener("click", handleClick);
     toolbarRoot.removeEventListener("click", handleClick);
     offBackend();
@@ -204,6 +229,8 @@ export function setup(ctx: SpindleFrontendContext) {
     appliedTrackerPlacement = null;
     drawerView = "settings";
     isGenerationRequestPending = false;
+    settingsRuntimeError = null;
+    trackerRuntimeError = null;
     settingsDraft.reset();
     presetEditorDrafts.clear();
     automaticSettingsDraft.reset();
@@ -223,7 +250,7 @@ function ensureDockPanel() {
     panel = ctx.ui.requestDockPanel({
       edge: "right",
       title: "SceneMap",
-      size: dockPanelSize,
+      size: isMobileDockViewport() ? dockPanelHeight : dockPanelWidth,
       minSize: 300,
       maxSize: 620,
       resizable: true,
@@ -331,8 +358,14 @@ function handleNativeDockResizeEnd(event: PointerEvent) {
   const cursor = getComputedStyle(handle).cursor;
   const rect = host.getBoundingClientRect();
   const nextSize = cursor === "ns-resize" ? rect.height : rect.width;
-  dockPanelSize = Math.max(300, Math.min(620, Math.round(nextSize)));
-  storeDockPanelSize(dockPanelSize);
+  const clampedSize = Math.max(300, Math.min(620, Math.round(nextSize)));
+  if (cursor === "ns-resize") {
+    dockPanelHeight = clampedSize;
+    storeDockPanelSize("height", clampedSize);
+  } else {
+    dockPanelWidth = clampedSize;
+    storeDockPanelSize("width", clampedSize);
+  }
 }
 
 function cleanupDockResizeHandles() {
@@ -347,19 +380,25 @@ function cleanupDockResizeHandles() {
   decoratedDockResizeHandles.clear();
 }
 
-function readStoredDockPanelSize(): number {
+function isMobileDockViewport(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 600px)").matches;
+}
+
+function readStoredDockPanelSize(axis: "width" | "height", fallback: number): number {
   try {
-    const value = Number(localStorage.getItem("scenemap:dock-panel-size"));
+    const stored = localStorage.getItem(`scenemap:dock-panel-${axis}`);
+    const legacy = axis === "width" ? localStorage.getItem("scenemap:dock-panel-size") : null;
+    const value = Number(stored ?? legacy);
     if (Number.isFinite(value) && value >= 300 && value <= 620) return Math.round(value);
   } catch {
     // Storage can be unavailable in restricted browser contexts.
   }
-  return 380;
+  return fallback;
 }
 
-function storeDockPanelSize(size: number) {
+function storeDockPanelSize(axis: "width" | "height", size: number) {
   try {
-    localStorage.setItem("scenemap:dock-panel-size", String(size));
+    localStorage.setItem(`scenemap:dock-panel-${axis}`, String(size));
   } catch {
     // Resizing still works for the current session when storage is unavailable.
   }
@@ -373,10 +412,24 @@ function requestState() {
   send({ type: "get_state" });
 }
 
-function render() {
+function settingsSurfaceHasActiveInteraction(): boolean {
+  if (!rootRef) return false;
+  const settingsVisible = mergeSettings(state.settings).trackerPlacement === "dock" || drawerView === "settings";
+  if (!settingsVisible) return false;
+  const activeElement = document.activeElement;
+  return (activeElement instanceof Element && rootRef.contains(activeElement))
+    || rootRef.querySelector('[aria-expanded="true"]') !== null;
+}
+
+function settingsSurfaceStructureMatches(previous: SceneMapState, next: SceneMapState): boolean {
+  return jsonValuesEqual(previous.settings, next.settings)
+    && jsonValuesEqual(previous.connections, next.connections);
+}
+
+function render(options: { preserveSettingsSurface?: boolean } = {}) {
   syncTrackerPlacement();
   renderDockPanel();
-  renderDrawerContent();
+  if (!options.preserveSettingsSurface) renderDrawerContent();
   renderChatToolbar();
   tabHandle?.setBadge(state.messagesBehind > 0 ? String(state.messagesBehind) : null);
 }
@@ -442,10 +495,15 @@ function renderDrawerPage(content: string) {
   const settingsTab = page.querySelector<HTMLElement>("[data-action=\"show-settings\"]");
   trackerTab?.classList.toggle("is-active", trackerActive);
   trackerTab?.setAttribute("aria-selected", String(trackerActive));
+  trackerTab?.setAttribute("tabindex", trackerActive ? "0" : "-1");
   settingsTab?.classList.toggle("is-active", !trackerActive);
   settingsTab?.setAttribute("aria-selected", String(!trackerActive));
+  settingsTab?.setAttribute("tabindex", trackerActive ? "-1" : "0");
   const view = page.querySelector<HTMLElement>(".scenemap-drawer-view");
-  if (view) view.innerHTML = content;
+  if (view) {
+    view.setAttribute("aria-labelledby", trackerActive ? "scenemap-tab-tracker" : "scenemap-tab-settings");
+    view.innerHTML = content;
+  }
 }
 
 function drawerPageMarkup(content: string): string {
@@ -453,10 +511,10 @@ function drawerPageMarkup(content: string): string {
   return `
     <div class="scenemap-drawer-scroll">
       <nav class="scenemap-view-tabs" role="tablist" aria-label="SceneMap sections">
-        <button type="button" role="tab" data-action="show-tracker" aria-selected="${trackerActive}" class="${trackerActive ? "is-active" : ""}">Tracker</button>
-        <button type="button" role="tab" data-action="show-settings" aria-selected="${!trackerActive}" class="${trackerActive ? "" : "is-active"}">Settings</button>
+        <button type="button" id="scenemap-tab-tracker" role="tab" data-action="show-tracker" aria-controls="scenemap-tabpanel" aria-selected="${trackerActive}" tabindex="${trackerActive ? "0" : "-1"}" class="${trackerActive ? "is-active" : ""}">Tracker</button>
+        <button type="button" id="scenemap-tab-settings" role="tab" data-action="show-settings" aria-controls="scenemap-tabpanel" aria-selected="${!trackerActive}" tabindex="${trackerActive ? "-1" : "0"}" class="${trackerActive ? "" : "is-active"}">Settings</button>
       </nav>
-      <div class="scenemap-drawer-view" role="tabpanel">${content}</div>
+      <div class="scenemap-drawer-view" id="scenemap-tabpanel" role="tabpanel" aria-labelledby="${trackerActive ? "scenemap-tab-tracker" : "scenemap-tab-settings"}">${content}</div>
     </div>
   `;
 }
@@ -477,6 +535,8 @@ function trackerPanelMarkup(): string {
         <button class="scenemap-pill-action scenemap-tracker-action" data-action="edit" ${latest?.schemaMatchesCurrent ? "" : "disabled"}>Edit</button>
         <button class="scenemap-pill-action scenemap-tracker-action scenemap-danger" data-action="delete" ${latest ? "" : "disabled"}>Delete</button>
       </header>
+
+      ${trackerRuntimeError ? `<div class="scenemap-runtime-error" role="alert" data-tracker-runtime-error>${escapeHtml(trackerRuntimeError)}</div>` : ""}
 
       <p class="scenemap-status is-${statusTone()}" role="status" aria-live="polite">${statusMarkup()}</p>
 
@@ -502,8 +562,9 @@ function renderDrawerSettings() {
   const drawerTrackerMode = settings.trackerPlacement === "drawer";
   const settingsMarkup = `
     <div class="scenemap-shell scenemap-settings-shell">
-      ${dockPanelError ? `<div class="scenemap-runtime-error">${escapeHtml(dockPanelError)}</div>` : ""}
       <section class="scenemap-settings-scroll">
+        ${dockPanelError ? `<div class="scenemap-runtime-error" role="alert">${escapeHtml(dockPanelError)}</div>` : ""}
+        ${settingsRuntimeError ? `<div class="scenemap-runtime-error" role="alert" data-settings-runtime-error>${escapeHtml(settingsRuntimeError)}</div>` : ""}
         <div class="scenemap-settings-group">
           <h3>Generation</h3>
       <label>
@@ -578,7 +639,7 @@ function renderDrawerSettings() {
                 ${expandEditorButton("schema")}
               </div>
             </label>
-            <div class="scenemap-inline-error scenemap-preset-schema-error" data-preset-schema-error ${presetDraft.schemaError ? "" : "hidden"}>${escapeHtml(presetDraft.schemaError ?? "")}</div>
+            <div class="scenemap-inline-error scenemap-preset-schema-error" role="alert" data-preset-schema-error ${presetDraft.schemaError ? "" : "hidden"}>${escapeHtml(presetDraft.schemaError ?? "")}</div>
             <label>
               <span>Prompt</span>
               <div class="scenemap-expandable-textarea">
@@ -588,7 +649,7 @@ function renderDrawerSettings() {
             </label>
             <div class="scenemap-preset-layout-row">
               <button class="scenemap-pill-action" data-action="edit-layout">Layout</button>
-              <button class="scenemap-pill-action scenemap-primary" data-action="save-preset" ${settingsDraft.saving ? "disabled" : ""}>${settingsDraft.saving ? "Saving..." : "Save preset"}</button>
+              <button class="scenemap-pill-action scenemap-primary" data-action="save-preset" data-save-preset ${settingsDraft.saving || !settingsDraft.dirty ? "disabled" : ""}>${settingsDraft.saving ? "Saving..." : "Save preset"}</button>
             </div>
           </div>
         </div>
@@ -667,10 +728,23 @@ function mountSettingsSelects(settings: SceneMapSettings) {
   );
   mount(
     "schemaPreset",
-    Object.entries(settings.schemaPresets).map(([key, preset]) => ({ value: key, label: preset.name })),
+    presetSelectOptions(settings),
     settings.schemaPreset,
     { searchPlaceholder: "Search presets..." },
   );
+}
+
+function presetSelectOptions(settings: SceneMapSettings): SpindleSelectOption[] {
+  const nameCounts = new Map<string, number>();
+  for (const preset of Object.values(settings.schemaPresets)) {
+    const name = preset.name.trim().toLocaleLowerCase();
+    nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+  }
+  return Object.entries(settings.schemaPresets).map(([key, preset]) => ({
+    value: key,
+    label: preset.name,
+    sublabel: (nameCounts.get(preset.name.trim().toLocaleLowerCase()) ?? 0) > 1 ? key : undefined,
+  }));
 }
 
 function updateNativeSetting(
@@ -783,12 +857,10 @@ function handleClick(event: Event) {
   if (!button) return;
   const action = button.dataset.action;
   if (action === "show-tracker" && mergeSettings(state.settings).trackerPlacement === "drawer") {
-    drawerView = "tracker";
-    renderDrawerContent();
+    activateDrawerView("tracker");
   }
   if (action === "show-settings" && mergeSettings(state.settings).trackerPlacement === "drawer") {
-    drawerView = "settings";
-    renderDrawerContent();
+    activateDrawerView("settings");
   }
   if (action === "expand-preset-editor") {
     event.preventDefault();
@@ -797,23 +869,25 @@ function handleClick(event: Event) {
   }
   if (action === "generate") {
     if (isGenerationRequestPending) return;
+    clearTrackerRuntimeError();
     isGenerationRequestPending = true;
     renderTrackerSurfaces();
     renderChatToolbar();
     send({ type: "generate_tracker" });
   }
   if (action === "edit" && state.latest?.schemaMatchesCurrent && state.chatId) {
+    clearTrackerRuntimeError();
     const { messageId, swipeId, data: trackerData } = state.latest;
     const chatId = state.chatId;
     openJsonEditor("Edit Tracker JSON", trackerData, (data) => {
       send({ type: "edit_tracker", chatId, messageId, swipeId, data });
     });
   }
-  if (action === "delete" && state.latest) send({ type: "delete_tracker", messageId: state.latest.messageId });
-  if (action === "create-preset" && ensureActivePresetEditorValid()) createPreset();
+  if (action === "delete" && state.latest) void confirmDeleteTracker();
+  if (action === "create-preset" && ensureActivePresetEditorValid() && ensureCurrentPresetLayoutValid()) createPreset();
   if (action === "rename-preset") renamePreset();
   if (action === "import-preset") void importPreset();
-  if (action === "export-preset" && ensureActivePresetEditorValid()) exportPreset();
+  if (action === "export-preset" && ensureActivePresetEditorValid() && ensureCurrentPresetLayoutValid()) exportPreset();
   if (action === "delete-preset") deletePreset();
   if (action === "edit-layout" && ensureActivePresetEditorValid()) editLayout();
   if (action === "save-preset") {
@@ -826,17 +900,80 @@ function handleClick(event: Event) {
   }
 }
 
-function updateSettingsDraft(settings: SceneMapSettings) {
-  settingsDraft.markChanged();
-  state = { ...state, settings };
-  revealUnsavedSettings();
+function activateDrawerView(view: "tracker" | "settings", focusTab = false) {
+  drawerView = view;
+  renderDrawerContent();
+  if (focusTab) {
+    queueMicrotask(() => rootRef?.querySelector<HTMLElement>(`[data-action="show-${view}"]`)?.focus());
+  }
 }
 
-function revealUnsavedSettings() {
+function handleRootKeydown(event: KeyboardEvent) {
+  const tab = (event.target as HTMLElement).closest<HTMLElement>('.scenemap-view-tabs [role="tab"]');
+  if (!tab || mergeSettings(state.settings).trackerPlacement !== "drawer") return;
+  const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+  if (!keys.includes(event.key)) return;
+  event.preventDefault();
+  const currentView = tab.dataset.action === "show-tracker" ? "tracker" : "settings";
+  const nextView = event.key === "Home"
+    ? "tracker"
+    : event.key === "End"
+      ? "settings"
+      : currentView === "tracker" ? "settings" : "tracker";
+  activateDrawerView(nextView, true);
+}
+
+async function confirmDeleteTracker() {
+  const chatId = state.chatId;
+  const messageId = state.latest?.messageId;
+  if (!chatId || !messageId) return;
+  const result = await ctxRef?.ui.showConfirm({
+    title: "Delete SceneMap",
+    message: "Delete the tracker for this scene? You can generate it again later.",
+    variant: "danger",
+    confirmLabel: "Delete",
+  });
+  if (!result?.confirmed || state.chatId !== chatId || state.latest?.messageId !== messageId) return;
+  clearTrackerRuntimeError();
+  send({ type: "delete_tracker", messageId });
+}
+
+function updateSettingsDraft(settings: SceneMapSettings) {
+  clearSettingsRuntimeError();
+  state = { ...state, settings };
+  settingsDraft.update(presetSettingsFingerprint(settings));
+  syncSettingsDraftUi();
+}
+
+function presetSettingsFingerprint(settings: SceneMapSettings): string {
+  const invalidSchemaDrafts = Object.fromEntries(
+    Array.from(presetEditorDrafts.entries())
+      .filter(([, draft]) => draft.schemaError !== null)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, draft]) => [key, draft.schemaText]),
+  );
+  return schemaFingerprint({
+    schemaPreset: settings.schemaPreset,
+    schemaPresets: settings.schemaPresets,
+    invalidSchemaDrafts,
+  });
+}
+
+function refreshSettingsDraftFingerprint(settings = state.settings) {
+  clearSettingsRuntimeError();
+  settingsDraft.update(presetSettingsFingerprint(settings));
+  syncSettingsDraftUi();
+}
+
+function syncSettingsDraftUi() {
   const indicator = rootRef?.querySelector<HTMLElement>("[data-settings-dirty]");
-  if (!indicator) return;
-  indicator.classList.add("is-visible");
-  indicator.setAttribute("aria-hidden", "false");
+  indicator?.classList.toggle("is-visible", settingsDraft.dirty);
+  indicator?.setAttribute("aria-hidden", String(!settingsDraft.dirty));
+  const saveButton = rootRef?.querySelector<HTMLButtonElement>("[data-save-preset]");
+  if (saveButton) {
+    saveButton.disabled = settingsDraft.saving || !settingsDraft.dirty;
+    saveButton.textContent = settingsDraft.saving ? "Saving..." : "Save preset";
+  }
 }
 
 function getPresetEditorDraft(settings: SceneMapSettings, key: string): PresetEditorDraft {
@@ -884,6 +1021,8 @@ function updatePresetEditorValue(editor: "schema" | "prompt", value: string) {
     if (nextPrompt !== getPresetPrompt(settings, key)) {
       settings.schemaPresets[key] = { ...preset, promptJson: nextPrompt };
       updateSettingsDraft(settings);
+    } else {
+      refreshSettingsDraftFingerprint(settings);
     }
     return;
   }
@@ -895,11 +1034,12 @@ function updatePresetEditorValue(editor: "schema" | "prompt", value: string) {
     if (!jsonValuesEqual(schema, preset.value)) {
       settings.schemaPresets[key] = { ...preset, value: schema };
       updateSettingsDraft(settings);
+    } else {
+      refreshSettingsDraftFingerprint(settings);
     }
   } catch (error) {
-    settingsDraft.markChanged();
-    revealUnsavedSettings();
     setPresetSchemaError(draft, (error as Error).message);
+    refreshSettingsDraftFingerprint(settings);
   }
 }
 
@@ -928,7 +1068,7 @@ function openPresetExpandedEditor(editor: "schema" | "prompt") {
   openTextEditor(title, value, (nextValue) => {
     updatePresetEditorValue(editor, nextValue);
     renderDrawerSettings();
-  });
+  }, "settings");
 }
 
 function setPresetSchemaError(draft: PresetEditorDraft, message: string | null) {
@@ -987,7 +1127,33 @@ function preparePresetDraftsForSave(): boolean {
     }
   }
   state = { ...state, settings };
+  for (const key of Object.keys(settings.schemaPresets)) {
+    try {
+      validatePresetLayout(settings, key);
+    } catch (error) {
+      const presetName = settings.schemaPresets[key]?.name ?? key;
+      showSettingsError(`Layout for preset "${presetName}" needs attention: ${(error as Error).message}`);
+      return false;
+    }
+  }
   return true;
+}
+
+function validatePresetLayout(settings: SceneMapSettings, key: string) {
+  const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
+  const layout = cloneLayout(getPresetLayout(settings, key));
+  validateLayout(layout, extractSchemaFieldOptions(preset.value));
+}
+
+function ensureCurrentPresetLayoutValid(): boolean {
+  const settings = mergeSettings(state.settings);
+  try {
+    validatePresetLayout(settings, settings.schemaPreset);
+    return true;
+  } catch (error) {
+    showSettingsError(`Layout needs attention: ${(error as Error).message}`);
+    return false;
+  }
 }
 
 function handleChange(event: Event) {
@@ -1026,6 +1192,7 @@ function updateSettingFromControl(
   immediate: boolean,
 ) {
   const settings = mergeSettings(state.settings);
+  clearSettingsRuntimeError();
   if (key === "autoGenerateAiTrackers") {
     settings.autoGenerateAiTrackers = (target as HTMLInputElement).checked;
   } else if (key === "showInputBarButton") {
@@ -1037,9 +1204,22 @@ function updateSettingFromControl(
   } else if (key === "temperature" || key === "topP") {
     const value = target.value.trim();
     const parsed = Number(value);
-    settings[key] = value === "" || !Number.isFinite(parsed) ? null : parsed;
-  } else if (key === "maxResponseTokens" || key === "includeLastXMessages") {
-    (settings as any)[key] = Math.max(0, Math.floor(Number(target.value) || 0));
+    const maximum = key === "temperature" ? 2 : 1;
+    const normalized = value === "" || !Number.isFinite(parsed)
+      ? null
+      : Math.max(0, Math.min(maximum, parsed));
+    settings[key] = normalized;
+    if (normalized !== null && normalized !== parsed) target.value = String(normalized);
+  } else if (key === "maxResponseTokens") {
+    const value = target.value.trim();
+    if (value === "" && !immediate) return;
+    const normalized = value === ""
+      ? defaultSettings.maxResponseTokens
+      : Math.max(1, Math.floor(Number(value) || 1));
+    settings.maxResponseTokens = normalized;
+    if (value === "" || Number(value) !== normalized) target.value = String(normalized);
+  } else if (key === "includeLastXMessages") {
+    settings.includeLastXMessages = Math.max(0, Math.floor(Number(target.value) || 0));
   } else {
     (settings as any)[key] = target.value;
   }
@@ -1057,6 +1237,7 @@ function createPreset() {
   const settings = mergeSettings(state.settings);
   const activePreset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   openNameEditor("New Preset", "", "Create preset", (name) => {
+    ensureUniquePresetName(settings, name);
     const key = uniquePresetKey(slugifyPresetName(name), settings.schemaPresets);
     settings.schemaPresets[key] = {
       name,
@@ -1075,6 +1256,7 @@ function renamePreset() {
   const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
   openNameEditor("Rename Preset", preset.name, "Save", (name) => {
     if (name === preset.name) return;
+    ensureUniquePresetName(settings, name, key);
     settings.schemaPresets[key] = { ...preset, name };
     updateSettingsDraft(settings);
     render();
@@ -1141,6 +1323,7 @@ async function importPreset() {
     const imported = parsePresetImport(JSON.parse(text), file.name);
     openNameEditor("Import Preset", imported.name, "Import", (name) => {
       const settings = mergeSettings(state.settings);
+      ensureUniquePresetName(settings, name);
       const key = uniquePresetKey(slugifyPresetName(name), settings.schemaPresets);
       settings.schemaPresets[key] = {
         name,
@@ -1165,7 +1348,7 @@ function parsePresetImport(value: unknown, filename: string): { name: string; sc
   validateSchemaDefinition(schema);
   if (typeof record.prompt !== "string") throw new Error("Preset file is missing a prompt string.");
   const layout = normalizeImportedLayout(record.layout);
-  validateLayout(layout);
+  validateLayout(layout, extractSchemaFieldOptions(schema));
   return {
     name: typeof record.name === "string" && record.name.trim() ? record.name.trim() : filename.replace(/\.json$/i, "").replace(/\.scenemap-preset$/i, ""),
     schema,
@@ -1219,7 +1402,7 @@ function openNameEditor(title: string, initialValue: string, submitLabel: string
         <button class="scenemap-pill-action" data-modal-action="cancel">Cancel</button>
         <button class="scenemap-pill-action scenemap-primary" data-modal-action="save">${escapeHtml(submitLabel)}</button>
       </div>
-      <div class="scenemap-inline-error" hidden></div>
+      <div class="scenemap-inline-error" role="alert" hidden></div>
     </div>
   `;
   const input = modal.root.querySelector("[data-name-input]") as HTMLInputElement;
@@ -1233,7 +1416,10 @@ function openNameEditor(title: string, initialValue: string, submitLabel: string
     modal.dismiss();
   };
   modal.root.addEventListener("keydown", (event) => {
-    if ((event as KeyboardEvent).key !== "Enter") return;
+    if (event.key !== "Enter" || event.isComposing) return;
+    const target = event.target as HTMLElement;
+    if (target !== input && !target.closest('[data-modal-action="save"]')) return;
+    event.preventDefault();
     try {
       save();
     } catch (err) {
@@ -1273,6 +1459,14 @@ function uniquePresetKey(base: string, presets: Record<string, unknown>): string
     index += 1;
   }
   return key;
+}
+
+function ensureUniquePresetName(settings: SceneMapSettings, name: string, ignoredKey?: string) {
+  const normalizedName = name.trim().toLocaleLowerCase();
+  const duplicate = Object.entries(settings.schemaPresets).some(([key, preset]) => (
+    key !== ignoredKey && preset.name.trim().toLocaleLowerCase() === normalizedName
+  ));
+  if (duplicate) throw new Error(`A preset named "${name.trim()}" already exists.`);
 }
 
 function editLayout() {
@@ -1371,11 +1565,16 @@ function editLayout() {
     const childIndex = readIndex(handle.dataset.child);
     const currentIndex = kind === "section" ? sectionIndex : kind === "field" ? fieldIndex : childIndex;
     if (currentIndex === null) return;
-    const nextIndex = currentIndex + (event.key === "ArrowUp" ? -1 : 1);
-    if (!reorderLayoutItem(workingLayout, kind, currentIndex, nextIndex, sectionIndex, fieldIndex)) return;
     event.preventDefault();
+    const nextIndex = currentIndex + (event.key === "ArrowUp" ? -1 : 1);
+    const itemCount = getLayoutItemCount(workingLayout, kind, sectionIndex, fieldIndex);
+    if (!reorderLayoutItem(workingLayout, kind, currentIndex, nextIndex, sectionIndex, fieldIndex)) {
+      announceLayoutReorder(modal.root, kind, currentIndex, itemCount, true);
+      return;
+    }
     draw();
     focusLayoutDragHandle(modal.root, kind, nextIndex, sectionIndex, fieldIndex);
+    queueMicrotask(() => announceLayoutReorder(modal.root, kind, nextIndex, itemCount));
   });
   modal.root.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLElement>("[data-layout-action]");
@@ -1407,7 +1606,7 @@ function editLayout() {
         return;
       }
       if (action === "save-layout") {
-        validateLayout(workingLayout);
+        validateLayout(workingLayout, fieldOptions);
         if (jsonValuesEqual(workingLayout, originalLayout)) {
           modal.dismiss();
           return;
@@ -1451,7 +1650,8 @@ function renderLayoutEditor(layout: TrackerBoardDisplayLayout, options: SchemaFi
         <button type="button" class="scenemap-pill-action" data-layout-action="cancel">Cancel</button>
         <button type="button" class="scenemap-pill-action scenemap-primary" data-layout-action="save-layout">Save</button>
       </div>
-      <div class="scenemap-inline-error" hidden></div>
+      <div class="scenemap-inline-error" role="alert" hidden></div>
+      <p class="scenemap-sr-only" aria-live="polite" data-layout-announcer></p>
     </div>
   `;
 }
@@ -1480,11 +1680,12 @@ function renderLayoutSection(section: TrackerBoardDisplayLayout["sections"][numb
 
 function renderLayoutField(field: TrackerBoardField, sectionIndex: number, fieldIndex: number, options: SchemaFieldOption[]): string {
   const option = findFieldOption(options, field.path);
+  const missingFromSchema = !option;
   const childEditor = field.display === "character_cards"
     ? renderChildFieldEditor(field, option?.children ?? [], sectionIndex, fieldIndex)
     : "";
   return `
-    <article class="scenemap-layout-field" data-layout-field-item>
+    <article class="scenemap-layout-field ${missingFromSchema ? "is-missing-schema-field" : ""}" data-layout-field-item>
       <div class="scenemap-layout-field-row">
         ${layoutDragHandle("field", "Drag to reorder field", { section: sectionIndex, field: fieldIndex })}
         <div class="scenemap-native-select" data-layout-select="field-path" data-section="${sectionIndex}" data-field="${fieldIndex}"></div>
@@ -1492,6 +1693,7 @@ function renderLayoutField(field: TrackerBoardField, sectionIndex: number, field
         <div class="scenemap-native-select" data-layout-select="field-display" data-section="${sectionIndex}" data-field="${fieldIndex}"></div>
         ${iconButton("remove-field", "Remove field", "trash", { section: sectionIndex, field: fieldIndex })}
       </div>
+      ${missingFromSchema ? `<div class="scenemap-layout-schema-warning" role="status">Field “${escapeHtml(field.path)}” no longer exists in this schema.</div>` : ""}
       ${renderChipCenterToggle("field-center", field.center === true, { section: sectionIndex, field: fieldIndex }, field.display === "chips")}
       ${childEditor}
     </article>
@@ -1508,22 +1710,24 @@ function renderChildFieldEditor(field: TrackerBoardField, options: SchemaFieldOp
         <button type="button" class="scenemap-layout-add-btn" data-layout-action="add-child" data-section="${sectionIndex}" data-field="${fieldIndex}" ${hasAvailableChildren ? "" : "disabled"}>${layoutIcon("plus")}<span>Add card field</span></button>
       </div>
       <div class="scenemap-layout-child-list" data-layout-sortable="child" data-section="${sectionIndex}" data-field="${fieldIndex}">
-        ${children.map((child, childIndex) => renderChildField(child, childIndex, sectionIndex, fieldIndex)).join("")}
+        ${children.map((child, childIndex) => renderChildField(child, childIndex, sectionIndex, fieldIndex, options)).join("")}
       </div>
     </div>
   `;
 }
 
-function renderChildField(child: TrackerBoardField, childIndex: number, sectionIndex: number, fieldIndex: number): string {
+function renderChildField(child: TrackerBoardField, childIndex: number, sectionIndex: number, fieldIndex: number, options: SchemaFieldOption[]): string {
+  const missingFromSchema = !findFieldOption(options, child.path);
   return `
-    <div class="scenemap-layout-child" data-layout-child-item>
+    <div class="scenemap-layout-child ${missingFromSchema ? "is-missing-schema-field" : ""}" data-layout-child-item>
       <div class="scenemap-layout-child-row">
         ${layoutDragHandle("child", "Drag to reorder card field", { section: sectionIndex, field: fieldIndex, child: childIndex })}
         <div class="scenemap-native-select" data-layout-select="child-path" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>
-        <input data-layout-input="child-label" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}" value="${escapeAttr(child.label ?? "")}" placeholder="Label">
+        <input aria-label="Card field label" data-layout-input="child-label" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}" value="${escapeAttr(child.label ?? "")}" placeholder="Label">
         <div class="scenemap-native-select" data-layout-select="child-display" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>
         ${iconButton("remove-child", "Remove card field", "trash", { section: sectionIndex, field: fieldIndex, child: childIndex })}
       </div>
+      ${missingFromSchema ? `<div class="scenemap-layout-schema-warning" role="status">Card field “${escapeHtml(child.path)}” no longer exists in this schema.</div>` : ""}
       ${renderChipCenterToggle("child-center", child.center === true, { section: sectionIndex, field: fieldIndex, child: childIndex }, child.display === "chips")}
     </div>
   `;
@@ -1674,7 +1878,7 @@ function mountLayoutSortables(
       draggable,
       handle: `.scenemap-layout-drag-handle[data-layout-drag="${kind}"]`,
       direction: "vertical",
-      animation: 170,
+      animation: prefersReducedMotion() ? 0 : 170,
       easing: "cubic-bezier(0.2, 0, 0, 1)",
       delay: 200,
       delayOnTouchOnly: true,
@@ -1704,7 +1908,10 @@ function mountLayoutSortables(
           queueMicrotask(() => redraw());
           return;
         }
-        queueMicrotask(() => reindexLayoutEditor(root));
+        queueMicrotask(() => {
+          reindexLayoutEditor(root);
+          announceLayoutReorder(root, kind, event.newIndex!, getLayoutItemCount(layout, kind, sectionIndex, fieldIndex));
+        });
       },
       onUnchoose: () => {
         document.body.classList.remove("scenemap-layout-is-dragging");
@@ -1750,6 +1957,34 @@ function setLayoutDataIndex(root: HTMLElement, key: "section" | "field" | "child
 function destroyLayoutSortables(instances: Sortable[]) {
   document.body.classList.remove("scenemap-layout-is-dragging");
   for (const instance of instances) instance.destroy();
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function getLayoutItemCount(
+  layout: TrackerBoardDisplayLayout,
+  kind: LayoutDragKind,
+  sectionIndex: number | null,
+  fieldIndex: number | null,
+): number {
+  if (kind === "section") return layout.sections.length;
+  if (sectionIndex === null) return 0;
+  const section = layout.sections[sectionIndex];
+  if (!section) return 0;
+  if (kind === "field") return section.fields.length;
+  if (fieldIndex === null) return 0;
+  return section.fields[fieldIndex]?.fields?.length ?? 0;
+}
+
+function announceLayoutReorder(root: HTMLElement, kind: LayoutDragKind, index: number, count: number, boundary = false) {
+  const announcer = root.querySelector<HTMLElement>("[data-layout-announcer]");
+  if (!announcer) return;
+  const item = kind === "section" ? "Section" : kind === "field" ? "Field" : "Card field";
+  announcer.textContent = boundary
+    ? `${item} is already at the ${index === 0 ? "first" : "last"} position.`
+    : `${item} moved to position ${index + 1} of ${count}.`;
 }
 
 function reorderLayoutItem(
@@ -1936,7 +2171,7 @@ function getAvailableFieldOptions(layout: TrackerBoardDisplayLayout, options: Sc
   }
   const available = options.filter((option) => !used.has(option.path));
   if (currentPath && !available.some((option) => option.path === currentPath)) {
-    available.unshift({ path: currentPath, label: humanizeTrackerKey(currentPath.split(".").pop() || currentPath), display: "text" });
+    available.unshift({ path: currentPath, label: `${humanizeTrackerKey(currentPath.split(".").pop() || currentPath)} (missing from schema)`, display: "text" });
   }
   return available;
 }
@@ -1947,7 +2182,7 @@ function getAvailableChildOptions(parent: TrackerBoardField, options: SchemaFiel
     .filter((path) => path && path !== currentPath));
   const available = options.filter((option) => !used.has(option.path));
   if (currentPath && !available.some((option) => option.path === currentPath)) {
-    available.unshift({ path: currentPath, label: humanizeTrackerKey(currentPath.split(".").pop() || currentPath), display: "text" });
+    available.unshift({ path: currentPath, label: `${humanizeTrackerKey(currentPath.split(".").pop() || currentPath)} (missing from schema)`, display: "text" });
   }
   return available;
 }
@@ -1993,13 +2228,15 @@ function readIndex(value: string | undefined): number | null {
   return Number.isInteger(index) && index >= 0 ? index : null;
 }
 
-function validateLayout(layout: TrackerBoardDisplayLayout) {
+function validateLayout(layout: TrackerBoardDisplayLayout, options: SchemaFieldOption[]) {
   if (!layout.sections.length) throw new Error("Add at least one section.");
   for (const section of layout.sections) {
     section.title = section.title.trim();
     section.fields = section.fields.filter((field) => field.path.trim());
     for (const field of section.fields) {
       field.path = field.path.trim();
+      const option = findFieldOption(options, field.path);
+      if (!option) throw new Error(`Field "${field.path}" no longer exists in the current schema.`);
       if (Object.prototype.hasOwnProperty.call(field, "label")) field.label = field.label?.trim() ?? "";
       field.fields = field.fields?.filter((child) => child.path.trim()).map((child) => ({
         ...child,
@@ -2007,6 +2244,11 @@ function validateLayout(layout: TrackerBoardDisplayLayout) {
         label: Object.prototype.hasOwnProperty.call(child, "label") ? child.label?.trim() ?? "" : undefined,
         center: child.display === "chips" ? child.center === true : undefined,
       }));
+      for (const child of field.fields ?? []) {
+        if (!findFieldOption(option.children ?? [], child.path)) {
+          throw new Error(`Card field "${child.path}" no longer exists under "${field.path}" in the current schema.`);
+        }
+      }
       field.center = field.display === "chips" ? field.center === true : undefined;
     }
   }
@@ -2054,15 +2296,22 @@ function openJsonEditor(title: string, value: unknown, onSave: (data: unknown) =
   });
 }
 
-function openTextEditor(title: string, value: string, onSave: (value: string) => void) {
+function openTextEditor(
+  title: string,
+  value: string,
+  onSave: (value: string) => void,
+  surface: "settings" | "tracker" = "tracker",
+) {
   if (Array.from(pendingTextEditors.values()).some((pending) => pending.title === title)) {
     const message = `${title} is already open.`;
-    showInlineError(message);
+    if (surface === "settings") showSettingsError(message);
+    else showTrackerError(message);
     return;
   }
   const requestId = `editor-${Date.now()}-${++editorRequestSeq}`;
   pendingTextEditors.set(requestId, {
     title,
+    surface,
     onSave,
   });
   send({
@@ -2083,14 +2332,45 @@ function handleTextEditorResult(payload: any) {
   try {
     pending.onSave(text);
   } catch (err) {
-    showInlineError((err as Error).message);
-    openTextEditor(pending.title, text, pending.onSave);
+    if (pending.surface === "settings") showSettingsError((err as Error).message);
+    else showTrackerError((err as Error).message);
+    openTextEditor(pending.title, text, pending.onSave, pending.surface);
   }
 }
 
-function showInlineError(message: string) {
-  const trackerRoot = mergeSettings(state.settings).trackerPlacement === "drawer" ? rootRef : dockRootRef;
-  prependRuntimeError(trackerRoot, message);
+function clearSettingsRuntimeError() {
+  settingsRuntimeError = null;
+  rootRef?.querySelector("[data-settings-runtime-error]")?.remove();
+}
+
+function mountSettingsRuntimeError(message: string) {
+  const container = rootRef?.querySelector<HTMLElement>(".scenemap-settings-scroll");
+  if (!container) return false;
+  container.querySelector("[data-settings-runtime-error]")?.remove();
+  const node = document.createElement("div");
+  node.className = "scenemap-runtime-error";
+  node.dataset.settingsRuntimeError = "";
+  node.setAttribute("role", "alert");
+  node.textContent = message;
+  container.prepend(node);
+  return true;
+}
+
+function clearTrackerRuntimeError() {
+  trackerRuntimeError = null;
+  rootRef?.querySelector("[data-tracker-runtime-error]")?.remove();
+  dockRootRef?.querySelector("[data-tracker-runtime-error]")?.remove();
+}
+
+function showTrackerError(message: string) {
+  trackerRuntimeError = message;
+  if (mergeSettings(state.settings).trackerPlacement === "drawer") {
+    drawerView = "tracker";
+    tabHandle?.activate();
+    renderDrawerContent();
+  } else {
+    renderDockPanel();
+  }
 }
 
 function takePendingTextEditor(requestId: string): PendingTextEditor | null {
@@ -2099,21 +2379,12 @@ function takePendingTextEditor(requestId: string): PendingTextEditor | null {
   return pending;
 }
 
-function prependRuntimeError(root: HTMLElement | null, message: string) {
-  if (!root) return;
-  const existing = root.querySelector(".scenemap-runtime-error");
-  existing?.remove();
-  const node = document.createElement("div");
-  node.className = "scenemap-runtime-error";
-  node.textContent = message;
-  root.prepend(node);
-}
-
 function showSettingsError(message: string) {
+  const preserveActiveSettings = settingsSurfaceHasActiveInteraction();
+  settingsRuntimeError = message;
   drawerView = "settings";
   tabHandle?.activate();
-  renderDrawerSettings();
-  prependRuntimeError(rootRef, message);
+  if (!preserveActiveSettings || !mountSettingsRuntimeError(message)) renderDrawerSettings();
 }
 
 function renderTracker(value: unknown, layout: TrackerBoardDisplayLayout): string {
@@ -2385,6 +2656,7 @@ const styles = `
 .scenemap-switch-row input { position: absolute; opacity: 0; pointer-events: none; }
 .scenemap-switch { position: relative; width: 32px; height: 18px; flex: 0 0 auto; border-radius: var(--lumiverse-radius-md, 10px); background: var(--lumiverse-fill); border: 1px solid var(--lumiverse-border-hover); transition: background .16s ease, border-color .16s ease; }
 .scenemap-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--lumiverse-text-muted); transition: transform .16s ease, background .16s ease; }
+.scenemap-switch-row input:focus-visible + .scenemap-switch { outline: 2px solid var(--lumiverse-primary, var(--lumiverse-accent)); outline-offset: 2px; }
 .scenemap-switch-row input:checked + .scenemap-switch { background: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
 .scenemap-switch-row input:checked + .scenemap-switch::after { transform: translateX(14px); background: var(--lumiverse-primary-contrast, #fff); }
 .scenemap-settings-preset-row label { margin: 0; min-width: 0; }
@@ -2435,6 +2707,7 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-layout-check-row input { width: auto !important; margin: 0; }
 .scenemap-layout-fields { display: flex; flex-direction: column; gap: 7px; }
 .scenemap-layout-field { display: flex; flex-direction: column; gap: 8px; }
+.scenemap-layout-schema-warning { border-left: 2px solid var(--lumiverse-warning, #f59e0b); color: var(--lumiverse-warning, #f59e0b); padding: 4px 7px; font-size: 11px; line-height: 1.4; }
 .scenemap-layout-field-row { display: grid; grid-template-columns: auto minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto; gap: 6px; align-items: center; }
 .scenemap-layout-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .scenemap-layout-actions button, .scenemap-layout-child-row button { padding: 5px 8px; font-size: 12px; }
@@ -2471,6 +2744,7 @@ body.scenemap-layout-is-dragging, body.scenemap-layout-is-dragging * { cursor: g
 .scenemap-pill-action { border-radius: var(--lumiverse-radius, 8px) !important; padding: 7px 13px !important; min-height: 34px; }
 .scenemap-tracker-action { min-height: 30px; padding: 5px 10px !important; font-size: calc(12px * var(--lumiverse-font-scale, 1)); }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: var(--lumiverse-radius, 8px); padding: 10px; font-size: 12px; }
+.scenemap-sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 @media (max-width: 760px) {
   .scenemap-layout-section-header { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
   .scenemap-layout-section-header .scenemap-layout-actions { grid-column: 2; flex-wrap: nowrap; }
@@ -2500,5 +2774,13 @@ body.scenemap-layout-is-dragging, body.scenemap-layout-is-dragging * { cursor: g
 }
 @keyframes scenemap-spin {
   to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scenemap-lv *, .scenemap-editor *, .scenemap-layout-editor *, .scenemap-name-editor * {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 `;

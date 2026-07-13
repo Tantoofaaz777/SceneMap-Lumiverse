@@ -1,29 +1,45 @@
 export class SettingsDraftTracker {
-  private revision = 0;
-  private savedRevision = 0;
-  private pendingSave: { requestId: string; revision: number } | null = null;
+  private currentFingerprint: string | null = null;
+  private savedFingerprint: string | null = null;
+  private pendingSave: { requestId: string; fingerprint: string | null } | null = null;
 
   get dirty(): boolean {
-    return this.revision !== this.savedRevision;
+    return this.currentFingerprint !== null && this.currentFingerprint !== this.savedFingerprint;
   }
 
   get saving(): boolean {
     return this.pendingSave !== null;
   }
 
-  markChanged(): void {
-    this.revision += 1;
+  get initialized(): boolean {
+    return this.currentFingerprint !== null;
+  }
+
+  initialize(fingerprint: string): void {
+    if (this.initialized) return;
+    this.currentFingerprint = fingerprint;
+    this.savedFingerprint = fingerprint;
+  }
+
+  update(fingerprint: string): void {
+    this.currentFingerprint = fingerprint;
+  }
+
+  synchronize(fingerprint: string): void {
+    if (this.pendingSave || this.dirty) return;
+    this.currentFingerprint = fingerprint;
+    this.savedFingerprint = fingerprint;
   }
 
   beginSave(requestId: string): boolean {
     if (this.pendingSave) return false;
-    this.pendingSave = { requestId, revision: this.revision };
+    this.pendingSave = { requestId, fingerprint: this.currentFingerprint };
     return true;
   }
 
   acknowledge(requestId: string): boolean {
     if (this.pendingSave?.requestId !== requestId) return false;
-    this.savedRevision = this.pendingSave.revision;
+    if (this.pendingSave.fingerprint !== null) this.savedFingerprint = this.pendingSave.fingerprint;
     this.pendingSave = null;
     return true;
   }
@@ -35,8 +51,8 @@ export class SettingsDraftTracker {
   }
 
   reset(): void {
-    this.revision = 0;
-    this.savedRevision = 0;
+    this.currentFingerprint = null;
+    this.savedFingerprint = null;
     this.pendingSave = null;
   }
 }

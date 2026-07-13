@@ -256,12 +256,21 @@ export function mergeSettings(value: Partial<SceneMapSettings> | null | undefine
   return {
     ...base,
     ...currentValue,
+    autoGenerateInterval: typeof currentValue.autoGenerateInterval === "number" && Number.isFinite(currentValue.autoGenerateInterval)
+      ? Math.max(1, Math.floor(currentValue.autoGenerateInterval))
+      : base.autoGenerateInterval,
+    maxResponseTokens: typeof currentValue.maxResponseTokens === "number" && Number.isFinite(currentValue.maxResponseTokens)
+      ? Math.max(1, Math.floor(currentValue.maxResponseTokens))
+      : base.maxResponseTokens,
     temperature: typeof currentValue.temperature === "number" && Number.isFinite(currentValue.temperature)
-      ? currentValue.temperature
+      ? resolveSamplingParameter(currentValue.temperature, 0, 2)
       : base.temperature,
     topP: typeof currentValue.topP === "number" && Number.isFinite(currentValue.topP)
-      ? currentValue.topP
+      ? resolveSamplingParameter(currentValue.topP, 0, 1)
       : base.topP,
+    includeLastXMessages: typeof currentValue.includeLastXMessages === "number" && Number.isFinite(currentValue.includeLastXMessages)
+      ? Math.max(0, Math.floor(currentValue.includeLastXMessages))
+      : base.includeLastXMessages,
     trackerPlacement: currentValue.trackerPlacement === "drawer" ? "drawer" : "dock",
     schemaPresets,
     displayLayout: currentValue.displayLayout?.sections?.length ? currentValue.displayLayout : base.displayLayout,
@@ -279,13 +288,13 @@ export function mergeAutomaticSettingsPatch(currentValue: SceneMapSettings, valu
     next.autoGenerateInterval = Math.max(1, Math.floor(patch.autoGenerateInterval));
   }
   if (typeof patch.maxResponseTokens === "number" && Number.isFinite(patch.maxResponseTokens)) {
-    next.maxResponseTokens = Math.max(0, Math.floor(patch.maxResponseTokens));
+    next.maxResponseTokens = Math.max(1, Math.floor(patch.maxResponseTokens));
   }
   if (patch.temperature === null || (typeof patch.temperature === "number" && Number.isFinite(patch.temperature))) {
-    next.temperature = patch.temperature;
+    next.temperature = patch.temperature === null ? null : resolveSamplingParameter(patch.temperature, 0, 2);
   }
   if (patch.topP === null || (typeof patch.topP === "number" && Number.isFinite(patch.topP))) {
-    next.topP = patch.topP;
+    next.topP = patch.topP === null ? null : resolveSamplingParameter(patch.topP, 0, 1);
   }
   if (typeof patch.includeLastXMessages === "number" && Number.isFinite(patch.includeLastXMessages)) {
     next.includeLastXMessages = Math.max(0, Math.floor(patch.includeLastXMessages));
