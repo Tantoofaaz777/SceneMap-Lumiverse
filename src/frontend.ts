@@ -53,6 +53,14 @@ let editorRequestSeq = 0;
 let settingsSaveRequestSeq = 0;
 let drawerSelectHandles: SpindleSelectHandle[] = [];
 
+type PresetEditorDraft = {
+  schemaText: string;
+  promptText: string;
+  schemaError: string | null;
+};
+
+const presetEditorDrafts = new Map<string, PresetEditorDraft>();
+
 type PendingTextEditor = {
   title: string;
   onSave: (value: string) => void;
@@ -93,7 +101,8 @@ export function setup(ctx: SpindleFrontendContext) {
       isGenerationRequestPending = false;
       const incomingState = payload.state as SceneMapState;
       if (typeof payload.settingsSaveRequestId === "string") {
-        settingsDraft.acknowledge(payload.settingsSaveRequestId);
+        const acknowledged = settingsDraft.acknowledge(payload.settingsSaveRequestId);
+        if (acknowledged && !settingsDraft.dirty) presetEditorDrafts.clear();
       }
       state = settingsDraft.dirty
         ? { ...incomingState, settings: state.settings }
@@ -154,6 +163,7 @@ export function setup(ctx: SpindleFrontendContext) {
     drawerView = "tracker";
     isGenerationRequestPending = false;
     settingsDraft.reset();
+    presetEditorDrafts.clear();
   };
 }
 
@@ -235,13 +245,15 @@ function renderDrawerSettings() {
   const settings = mergeSettings(state.settings);
   const presetKeys = Object.keys(settings.schemaPresets);
   const canDeletePreset = settings.schemaPreset !== "default" && presetKeys.length > 1;
+  const activePreset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  const presetDraft = getPresetEditorDraft(settings, settings.schemaPreset);
   rootRef.innerHTML = `
     <div class="scenemap-shell scenemap-settings-shell">
       <header class="scenemap-settings-heading">
         <button class="scenemap-pill-action scenemap-pill-icon" data-action="close-settings" title="Back to SceneMap" aria-label="Back to SceneMap">${backSvg}</button>
         <div>
           <h2>Settings</h2>
-          ${settingsDraft.dirty ? `<p>Unsaved changes</p>` : ""}
+          <p data-settings-dirty ${settingsDraft.dirty ? "" : "hidden"}>Unsaved changes</p>
         </div>
       </header>
       <section class="scenemap-settings-scroll">
@@ -291,24 +303,32 @@ function renderDrawerSettings() {
         </div>
         <div class="scenemap-settings-group scenemap-settings-preset-row">
           <h3>Presets</h3>
-        <label>
-          <span>Global preset</span>
-          <div class="scenemap-native-select" data-native-setting="schemaPreset"></div>
-        </label>
-          <div class="scenemap-settings-preset-actions">
-            <button class="scenemap-pill-action" data-action="create-preset">New</button>
-            <button class="scenemap-pill-action" data-action="rename-preset">Rename</button>
-            <button class="scenemap-pill-action" data-action="import-preset">Import</button>
-            <button class="scenemap-pill-action" data-action="export-preset">Export</button>
-            <button class="scenemap-pill-action scenemap-danger" data-action="delete-preset" ${canDeletePreset ? "" : "disabled"}>Delete</button>
+          <div class="scenemap-preset-toolbar">
+            <label class="scenemap-preset-select">
+              <span>Global preset</span>
+              <div class="scenemap-native-select" data-native-setting="schemaPreset"></div>
+            </label>
+            <div class="scenemap-settings-preset-actions">
+              <button class="scenemap-pill-action" data-action="create-preset">New</button>
+              <button class="scenemap-pill-action" data-action="rename-preset">Rename</button>
+              <button class="scenemap-pill-action" data-action="import-preset">Import</button>
+              <button class="scenemap-pill-action" data-action="export-preset">Export</button>
+              <button class="scenemap-pill-action scenemap-danger" data-action="delete-preset" ${canDeletePreset ? "" : "disabled"}>Delete</button>
+            </div>
           </div>
-        </div>
-        <div class="scenemap-settings-group">
-          <h3>Current preset</h3>
-          <div class="scenemap-settings-actions-left">
-          <button class="scenemap-pill-action" data-action="edit-schema">Schema</button>
-          <button class="scenemap-pill-action" data-action="edit-prompt">Prompt</button>
-          <button class="scenemap-pill-action" data-action="edit-layout">Layout</button>
+          <div class="scenemap-preset-editor">
+            <label>
+              <span>Schema (JSON)</span>
+              <textarea data-preset-editor="schema" spellcheck="false" aria-label="Schema JSON for ${escapeAttr(activePreset.name)}">${escapeHtml(presetDraft.schemaText)}</textarea>
+            </label>
+            <div class="scenemap-inline-error scenemap-preset-schema-error" data-preset-schema-error ${presetDraft.schemaError ? "" : "hidden"}>${escapeHtml(presetDraft.schemaError ?? "")}</div>
+            <label>
+              <span>Prompt</span>
+              <textarea data-preset-editor="prompt" aria-label="Prompt for ${escapeAttr(activePreset.name)}" placeholder="Write the SceneMap generation prompt. Macros like {{schema}} are supported.">${escapeHtml(presetDraft.promptText)}</textarea>
+            </label>
+            <div class="scenemap-preset-layout-row">
+              <button class="scenemap-pill-action" data-action="edit-layout">Layout</button>
+            </div>
           </div>
         </div>
       </section>
@@ -434,15 +454,14 @@ function handleClick(event: Event) {
     });
   }
   if (action === "delete" && state.latest) send({ type: "delete_tracker", messageId: state.latest.messageId });
-  if (action === "create-preset") createPreset();
+  if (action === "create-preset" && ensureActivePresetEditorValid()) createPreset();
   if (action === "rename-preset") renamePreset();
   if (action === "import-preset") void importPreset();
-  if (action === "export-preset") exportPreset();
+  if (action === "export-preset" && ensureActivePresetEditorValid()) exportPreset();
   if (action === "delete-preset") deletePreset();
-  if (action === "edit-schema") editActiveSchema();
-  if (action === "edit-prompt") editPrompt();
-  if (action === "edit-layout") editLayout();
+  if (action === "edit-layout" && ensureActivePresetEditorValid()) editLayout();
   if (action === "save-settings") {
+    if (!preparePresetDraftsForSave()) return;
     const requestId = `settings-${Date.now()}-${++settingsSaveRequestSeq}`;
     if (!settingsDraft.beginSave(requestId)) return;
     renderDrawer();
@@ -453,20 +472,145 @@ function handleClick(event: Event) {
 function updateSettingsDraft(settings: SceneMapSettings) {
   settingsDraft.markChanged();
   state = { ...state, settings };
+  revealUnsavedSettings();
+}
+
+function revealUnsavedSettings() {
+  const indicator = rootRef?.querySelector<HTMLElement>("[data-settings-dirty]");
+  if (indicator) indicator.hidden = false;
+}
+
+function getPresetEditorDraft(settings: SceneMapSettings, key: string): PresetEditorDraft {
+  const existing = presetEditorDrafts.get(key);
+  if (existing) return existing;
+  const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
+  const draft: PresetEditorDraft = {
+    schemaText: JSON.stringify(preset.value, null, 2),
+    promptText: getPresetPrompt(settings, key),
+    schemaError: null,
+  };
+  presetEditorDrafts.set(key, draft);
+  return draft;
+}
+
+function parseSchemaEditorText(text: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`Invalid JSON: ${(error as Error).message}`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Schema JSON must be an object.");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function updatePresetEditorControl(target: HTMLInputElement | HTMLTextAreaElement) {
+  const settings = mergeSettings(state.settings);
+  const key = settings.schemaPreset;
+  const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
+  const draft = getPresetEditorDraft(settings, key);
+  if (target.dataset.presetEditor === "prompt") {
+    draft.promptText = target.value;
+    const nextPrompt = target.value || DEFAULT_PROMPT_JSON;
+    if (nextPrompt !== getPresetPrompt(settings, key)) {
+      settings.schemaPresets[key] = { ...preset, promptJson: nextPrompt };
+      updateSettingsDraft(settings);
+    }
+    return;
+  }
+
+  draft.schemaText = target.value;
+  try {
+    const schema = parseSchemaEditorText(target.value);
+    setPresetSchemaError(draft, null);
+    if (!jsonValuesEqual(schema, preset.value)) {
+      settings.schemaPresets[key] = { ...preset, value: schema };
+      updateSettingsDraft(settings);
+    }
+  } catch (error) {
+    settingsDraft.markChanged();
+    revealUnsavedSettings();
+    setPresetSchemaError(draft, (error as Error).message);
+  }
+}
+
+function setPresetSchemaError(draft: PresetEditorDraft, message: string | null) {
+  draft.schemaError = message;
+  const error = rootRef?.querySelector<HTMLElement>("[data-preset-schema-error]");
+  if (!error) return;
+  error.hidden = !message;
+  error.textContent = message ?? "";
+}
+
+function applyPresetEditorDraft(settings: SceneMapSettings, key: string): void {
+  const draft = presetEditorDrafts.get(key);
+  const preset = settings.schemaPresets[key];
+  if (!draft || !preset) return;
+  try {
+    const schema = parseSchemaEditorText(draft.schemaText);
+    draft.schemaError = null;
+    settings.schemaPresets[key] = {
+      ...preset,
+      value: schema,
+      promptJson: draft.promptText || DEFAULT_PROMPT_JSON,
+    };
+  } catch (error) {
+    draft.schemaError = (error as Error).message;
+    throw error;
+  }
+}
+
+function ensureActivePresetEditorValid(): boolean {
+  const settings = mergeSettings(state.settings);
+  const key = settings.schemaPreset;
+  try {
+    applyPresetEditorDraft(settings, key);
+    state = { ...state, settings };
+    const draft = presetEditorDrafts.get(key);
+    if (draft) setPresetSchemaError(draft, null);
+    return true;
+  } catch {
+    const draft = presetEditorDrafts.get(key);
+    if (draft) setPresetSchemaError(draft, draft.schemaError);
+    return false;
+  }
+}
+
+function preparePresetDraftsForSave(): boolean {
+  const settings = mergeSettings(state.settings);
+  for (const key of presetEditorDrafts.keys()) {
+    if (!settings.schemaPresets[key]) continue;
+    try {
+      applyPresetEditorDraft(settings, key);
+    } catch {
+      settings.schemaPreset = key;
+      state = { ...state, settings };
+      renderDrawer();
+      return false;
+    }
+  }
+  state = { ...state, settings };
+  return true;
 }
 
 function handleChange(event: Event) {
   const target = event.target as HTMLInputElement | HTMLSelectElement;
   const key = target.dataset.setting as keyof SceneMapSettings | undefined;
   if (!key) return;
-  updateSettingFromControl(target, key);
+  updateSettingFromControl(target as HTMLInputElement, key);
 }
 
 function handleInput(event: Event) {
-  const target = event.target as HTMLInputElement;
+  const target = event.target as HTMLInputElement | HTMLTextAreaElement;
+  if (target.dataset.presetEditor) {
+    updatePresetEditorControl(target);
+    return;
+  }
   const key = target.dataset.setting as keyof SceneMapSettings | undefined;
   if (!key || target.type === "checkbox") return;
-  updateSettingFromControl(target, key);
+  updateSettingFromControl(target as HTMLInputElement, key);
 }
 
 function updateSettingFromControl(target: HTMLInputElement | HTMLSelectElement, key: keyof SceneMapSettings) {
@@ -533,6 +677,7 @@ async function deletePreset() {
   });
   if (!result?.confirmed) return;
   delete settings.schemaPresets[key];
+  presetEditorDrafts.delete(key);
   const fallbackKey = settings.schemaPresets.default ? "default" : Object.keys(settings.schemaPresets)[0];
   updateSettingsDraft({ ...settings, schemaPreset: fallbackKey });
   render();
@@ -1837,9 +1982,18 @@ const styles = `
 .scenemap-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--lumiverse-text-muted); transition: transform .16s ease, background .16s ease; }
 .scenemap-switch-row input:checked + .scenemap-switch { background: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
 .scenemap-switch-row input:checked + .scenemap-switch::after { transform: translateX(14px); background: var(--lumiverse-primary-contrast, #fff); }
-.scenemap-settings-preset-row label { margin: 0 0 10px; min-width: 0; }
-.scenemap-settings-preset-actions, .scenemap-settings-actions-left { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.scenemap-settings-preset-actions .scenemap-pill-action, .scenemap-settings-actions-left .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; padding: 6px 11px !important; min-height: 32px; }
+.scenemap-settings-preset-row label { margin: 0; min-width: 0; }
+.scenemap-preset-toolbar { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
+.scenemap-preset-select { flex: 1 1 220px; }
+.scenemap-settings-preset-actions, .scenemap-settings-actions-left { display: flex; flex: 0 1 auto; flex-wrap: wrap; gap: 6px; align-items: center; }
+.scenemap-settings-preset-actions .scenemap-pill-action, .scenemap-settings-actions-left .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; padding: 5px 9px !important; min-height: 30px; }
+.scenemap-preset-editor { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--lumiverse-border); }
+.scenemap-preset-editor label { display: flex; flex-direction: column; gap: 6px; color: var(--lumiverse-text-muted); font-size: 12px; }
+.scenemap-preset-editor textarea { width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; border: 1px solid var(--lumiverse-border); border-radius: 8px; background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 10px 11px; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.scenemap-preset-editor textarea[data-preset-editor="prompt"] { min-height: 150px; font-family: inherit; }
+.scenemap-preset-editor textarea:focus { outline: none; border-color: var(--lumiverse-primary, var(--lumiverse-accent)); box-shadow: 0 0 0 1px var(--lumiverse-primary-020, transparent); }
+.scenemap-preset-schema-error { margin-top: -4px; }
+.scenemap-preset-layout-row { display: flex; justify-content: flex-end; }
 .scenemap-settings-save-bar { flex: 0 0 auto; display: flex; justify-content: flex-end; padding-top: 12px; border-top: 1px solid var(--lumiverse-border); }
 .scenemap-settings-save-bar .scenemap-primary { min-width: 130px; }
 .scenemap-settings-shell input:not([type="checkbox"]), .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-name-editor input, .scenemap-schema-editor input:not([type="checkbox"]), .scenemap-schema-editor textarea {

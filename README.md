@@ -9,7 +9,7 @@ SceneMap is a Lumiverse Spindle extension that tracks roleplay scene state as st
 - Display the current tracker in a Lumiverse drawer tab.
 - Edit, delete, and regenerate tracker JSON.
 - Configure connection, sampling, prompt, schema, display layout, context window, and auto-generation from the SceneMap sidebar.
-- Build custom schemas with a visual nested-field editor, with Advanced JSON available when needed.
+- Edit each preset's JSON schema and prompt directly in the SceneMap settings sidebar.
 - Import and export presets containing schema, prompt, and layout.
 - Include character card, active persona, and active world info context during tracker generation.
 - Expose the latest tracker as the `{{scenemap}}` macro for prompts.

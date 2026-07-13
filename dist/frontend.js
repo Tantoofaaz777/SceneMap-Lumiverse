@@ -260,229 +260,6 @@ class SettingsDraftTracker {
 
 // src/schema-form.ts
 var SUPPORTED_TYPES = new Set(["string", "integer", "number", "boolean", "object", "array"]);
-var STRUCTURAL_KEYWORDS = [
-  "$ref",
-  "allOf",
-  "anyOf",
-  "oneOf",
-  "not",
-  "if",
-  "then",
-  "else",
-  "patternProperties",
-  "prefixItems",
-  "dependencies",
-  "dependentRequired",
-  "dependentSchemas"
-];
-var TYPE_SPECIFIC_KEYWORDS = [
-  "minLength",
-  "maxLength",
-  "pattern",
-  "format",
-  "multipleOf",
-  "exclusiveMinimum",
-  "exclusiveMaximum",
-  "minItems",
-  "maxItems",
-  "uniqueItems",
-  "contains",
-  "minProperties",
-  "maxProperties",
-  "propertyNames",
-  "dependencies",
-  "dependentRequired",
-  "dependentSchemas"
-];
-var nextVisualSchemaId = 0;
-function createVisualSchemaModel(schema) {
-  assertRecord(schema, "Schema");
-  const rootType = inferType(schema);
-  if (rootType !== "object")
-    throw new Error("Visual editing requires an object schema at the root.");
-  assertVisualStructure(schema, "Schema");
-  return {
-    title: typeof schema.title === "string" ? schema.title : "",
-    description: typeof schema.description === "string" ? schema.description : "",
-    strict: schema.additionalProperties === false,
-    fields: readFields(schema, "Schema"),
-    raw: cloneRecord(schema)
-  };
-}
-function visualSchemaToJson(model) {
-  const schema = cloneRecord(model.raw);
-  delete schema.title;
-  delete schema.description;
-  delete schema.type;
-  delete schema.properties;
-  delete schema.required;
-  delete schema.additionalProperties;
-  schema.type = "object";
-  if (model.title.trim())
-    schema.title = model.title.trim();
-  if (model.description.trim())
-    schema.description = model.description.trim();
-  writeFields(schema, model.fields, "Schema");
-  if (model.strict)
-    schema.additionalProperties = false;
-  return schema;
-}
-function createVisualSchemaField(existingNames) {
-  const names = new Set(existingNames);
-  let name = "newField";
-  let suffix = 2;
-  while (names.has(name))
-    name = `newField${suffix++}`;
-  return {
-    ...createVisualSchemaNode("string"),
-    name,
-    required: true
-  };
-}
-function setVisualSchemaNodeType(node, type) {
-  node.type = type;
-  if (type === "object" && node.fields.length === 0)
-    node.fields = [];
-  if (type === "array" && !node.item)
-    node.item = createVisualSchemaNode("string");
-  if (type !== "array")
-    node.item = null;
-  if (type !== "object")
-    node.fields = [];
-  if (type !== "number" && type !== "integer") {
-    node.minimum = null;
-    node.maximum = null;
-  }
-}
-function schemaNodeHasAdvancedRules(node) {
-  const baseKeys = new Set(["type", "description", "properties", "required", "items", "minimum", "maximum", "additionalProperties"]);
-  return Object.keys(node.raw).some((key) => !baseKeys.has(key));
-}
-function readFields(schema, path) {
-  const properties = schema.properties;
-  if (properties === undefined)
-    return [];
-  assertRecord(properties, `${path} properties`);
-  const required = new Set(Array.isArray(schema.required) ? schema.required.filter((value) => typeof value === "string") : []);
-  return Object.entries(properties).map(([name, value]) => {
-    assertRecord(value, `${path}.${name}`);
-    const node = readNode(value, `${path}.${name}`);
-    return { ...node, name, required: required.has(name) };
-  });
-}
-function readNode(schema, path) {
-  assertVisualStructure(schema, path);
-  const type = inferType(schema);
-  const node = createVisualSchemaNode(type, schema);
-  node.description = typeof schema.description === "string" ? schema.description : "";
-  node.minimum = finiteNumberOrNull(schema.minimum);
-  node.maximum = finiteNumberOrNull(schema.maximum);
-  node.strict = schema.additionalProperties === false;
-  if (type === "object")
-    node.fields = readFields(schema, path);
-  if (type === "array") {
-    const items = schema.items ?? { type: "string" };
-    if (!items || typeof items !== "object" || Array.isArray(items)) {
-      throw new Error(`${path} uses array items that the visual editor cannot represent. Use Advanced JSON.`);
-    }
-    node.item = readNode(items, `${path} items`);
-  }
-  return node;
-}
-function writeFields(schema, fields, path) {
-  const properties = {};
-  const required = [];
-  for (const field of fields) {
-    const name = field.name.trim();
-    if (!name)
-      throw new Error(`${path} contains a field without a name.`);
-    if (name.includes("."))
-      throw new Error(`Field "${name}" cannot contain a period because periods separate nested fields.`);
-    if (Object.prototype.hasOwnProperty.call(properties, name))
-      throw new Error(`${path} contains more than one field named "${name}".`);
-    properties[name] = writeNode(field, `${path}.${name}`);
-    if (field.required)
-      required.push(name);
-  }
-  schema.properties = properties;
-  if (required.length > 0)
-    schema.required = required;
-}
-function writeNode(node, path) {
-  const schema = cloneRecord(node.raw);
-  for (const key of ["type", "description", "properties", "required", "items", "minimum", "maximum", "additionalProperties"])
-    delete schema[key];
-  if (node.type !== node.originalType)
-    for (const key of TYPE_SPECIFIC_KEYWORDS)
-      delete schema[key];
-  schema.type = node.type;
-  if (node.description.trim())
-    schema.description = node.description.trim();
-  if (node.type === "number" || node.type === "integer") {
-    if (node.minimum !== null && node.maximum !== null && node.minimum > node.maximum) {
-      throw new Error(`${path} has a minimum greater than its maximum.`);
-    }
-    if (node.minimum !== null)
-      schema.minimum = node.minimum;
-    if (node.maximum !== null)
-      schema.maximum = node.maximum;
-  }
-  if (node.type === "object") {
-    writeFields(schema, node.fields, path);
-    if (node.strict)
-      schema.additionalProperties = false;
-  }
-  if (node.type === "array")
-    schema.items = writeNode(node.item ?? createVisualSchemaNode("string"), `${path} items`);
-  return schema;
-}
-function createVisualSchemaNode(type, raw = {}) {
-  return {
-    id: `schema-node-${++nextVisualSchemaId}`,
-    type,
-    originalType: type,
-    description: "",
-    minimum: null,
-    maximum: null,
-    strict: false,
-    fields: [],
-    item: null,
-    raw: cloneRecord(raw)
-  };
-}
-function assertVisualStructure(schema, path) {
-  const keyword = STRUCTURAL_KEYWORDS.find((key) => (key in schema));
-  if (keyword)
-    throw new Error(`${path} uses ${keyword}, which must be edited with Advanced JSON.`);
-  if (schema.additionalProperties !== undefined && typeof schema.additionalProperties !== "boolean") {
-    throw new Error(`${path} uses an additionalProperties schema, which must be edited with Advanced JSON.`);
-  }
-  inferType(schema);
-}
-function inferType(schema) {
-  const declared = schema.type;
-  if (typeof declared === "string" && SUPPORTED_TYPES.has(declared))
-    return declared;
-  if (Array.isArray(declared))
-    throw new Error("Schemas with multiple types must be edited with Advanced JSON.");
-  if (schema.properties && typeof schema.properties === "object")
-    return "object";
-  if (schema.items !== undefined)
-    return "array";
-  if (declared === undefined)
-    return "string";
-  throw new Error(`Schema type "${String(declared)}" is not supported by the visual editor.`);
-}
-function assertRecord(value, label) {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error(`${label} must be an object.`);
-}
-function finiteNumberOrNull(value) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-function cloneRecord(value) {
-  return JSON.parse(JSON.stringify(value));
-}
 
 // src/frontend.ts
 var state = {
@@ -507,6 +284,7 @@ var isGenerationRequestPending = false;
 var editorRequestSeq = 0;
 var settingsSaveRequestSeq = 0;
 var drawerSelectHandles = [];
+var presetEditorDrafts = new Map;
 var pendingTextEditors = new Map;
 var settingsDraft = new SettingsDraftTracker;
 var iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
@@ -538,7 +316,9 @@ function setup(ctx) {
       isGenerationRequestPending = false;
       const incomingState = payload.state;
       if (typeof payload.settingsSaveRequestId === "string") {
-        settingsDraft.acknowledge(payload.settingsSaveRequestId);
+        const acknowledged = settingsDraft.acknowledge(payload.settingsSaveRequestId);
+        if (acknowledged && !settingsDraft.dirty)
+          presetEditorDrafts.clear();
       }
       state = settingsDraft.dirty ? { ...incomingState, settings: state.settings } : incomingState;
       render();
@@ -597,6 +377,7 @@ function setup(ctx) {
     drawerView = "tracker";
     isGenerationRequestPending = false;
     settingsDraft.reset();
+    presetEditorDrafts.clear();
   };
 }
 function send(payload) {
@@ -675,13 +456,15 @@ function renderDrawerSettings() {
   const settings = mergeSettings(state.settings);
   const presetKeys = Object.keys(settings.schemaPresets);
   const canDeletePreset = settings.schemaPreset !== "default" && presetKeys.length > 1;
+  const activePreset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  const presetDraft = getPresetEditorDraft(settings, settings.schemaPreset);
   rootRef.innerHTML = `
     <div class="scenemap-shell scenemap-settings-shell">
       <header class="scenemap-settings-heading">
         <button class="scenemap-pill-action scenemap-pill-icon" data-action="close-settings" title="Back to SceneMap" aria-label="Back to SceneMap">${backSvg}</button>
         <div>
           <h2>Settings</h2>
-          ${settingsDraft.dirty ? `<p>Unsaved changes</p>` : ""}
+          <p data-settings-dirty ${settingsDraft.dirty ? "" : "hidden"}>Unsaved changes</p>
         </div>
       </header>
       <section class="scenemap-settings-scroll">
@@ -731,24 +514,32 @@ function renderDrawerSettings() {
         </div>
         <div class="scenemap-settings-group scenemap-settings-preset-row">
           <h3>Presets</h3>
-        <label>
-          <span>Global preset</span>
-          <div class="scenemap-native-select" data-native-setting="schemaPreset"></div>
-        </label>
-          <div class="scenemap-settings-preset-actions">
-            <button class="scenemap-pill-action" data-action="create-preset">New</button>
-            <button class="scenemap-pill-action" data-action="rename-preset">Rename</button>
-            <button class="scenemap-pill-action" data-action="import-preset">Import</button>
-            <button class="scenemap-pill-action" data-action="export-preset">Export</button>
-            <button class="scenemap-pill-action scenemap-danger" data-action="delete-preset" ${canDeletePreset ? "" : "disabled"}>Delete</button>
+          <div class="scenemap-preset-toolbar">
+            <label class="scenemap-preset-select">
+              <span>Global preset</span>
+              <div class="scenemap-native-select" data-native-setting="schemaPreset"></div>
+            </label>
+            <div class="scenemap-settings-preset-actions">
+              <button class="scenemap-pill-action" data-action="create-preset">New</button>
+              <button class="scenemap-pill-action" data-action="rename-preset">Rename</button>
+              <button class="scenemap-pill-action" data-action="import-preset">Import</button>
+              <button class="scenemap-pill-action" data-action="export-preset">Export</button>
+              <button class="scenemap-pill-action scenemap-danger" data-action="delete-preset" ${canDeletePreset ? "" : "disabled"}>Delete</button>
+            </div>
           </div>
-        </div>
-        <div class="scenemap-settings-group">
-          <h3>Current preset</h3>
-          <div class="scenemap-settings-actions-left">
-          <button class="scenemap-pill-action" data-action="edit-schema">Schema</button>
-          <button class="scenemap-pill-action" data-action="edit-prompt">Prompt</button>
-          <button class="scenemap-pill-action" data-action="edit-layout">Layout</button>
+          <div class="scenemap-preset-editor">
+            <label>
+              <span>Schema (JSON)</span>
+              <textarea data-preset-editor="schema" spellcheck="false" aria-label="Schema JSON for ${escapeAttr(activePreset.name)}">${escapeHtml(presetDraft.schemaText)}</textarea>
+            </label>
+            <div class="scenemap-inline-error scenemap-preset-schema-error" data-preset-schema-error ${presetDraft.schemaError ? "" : "hidden"}>${escapeHtml(presetDraft.schemaError ?? "")}</div>
+            <label>
+              <span>Prompt</span>
+              <textarea data-preset-editor="prompt" aria-label="Prompt for ${escapeAttr(activePreset.name)}" placeholder="Write the SceneMap generation prompt. Macros like {{schema}} are supported.">${escapeHtml(presetDraft.promptText)}</textarea>
+            </label>
+            <div class="scenemap-preset-layout-row">
+              <button class="scenemap-pill-action" data-action="edit-layout">Layout</button>
+            </div>
           </div>
         </div>
       </section>
@@ -866,23 +657,21 @@ function handleClick(event) {
   }
   if (action === "delete" && state.latest)
     send({ type: "delete_tracker", messageId: state.latest.messageId });
-  if (action === "create-preset")
+  if (action === "create-preset" && ensureActivePresetEditorValid())
     createPreset();
   if (action === "rename-preset")
     renamePreset();
   if (action === "import-preset")
     importPreset();
-  if (action === "export-preset")
+  if (action === "export-preset" && ensureActivePresetEditorValid())
     exportPreset();
   if (action === "delete-preset")
     deletePreset();
-  if (action === "edit-schema")
-    editActiveSchema();
-  if (action === "edit-prompt")
-    editPrompt();
-  if (action === "edit-layout")
+  if (action === "edit-layout" && ensureActivePresetEditorValid())
     editLayout();
   if (action === "save-settings") {
+    if (!preparePresetDraftsForSave())
+      return;
     const requestId = `settings-${Date.now()}-${++settingsSaveRequestSeq}`;
     if (!settingsDraft.beginSave(requestId))
       return;
@@ -893,6 +682,125 @@ function handleClick(event) {
 function updateSettingsDraft(settings) {
   settingsDraft.markChanged();
   state = { ...state, settings };
+  revealUnsavedSettings();
+}
+function revealUnsavedSettings() {
+  const indicator = rootRef?.querySelector("[data-settings-dirty]");
+  if (indicator)
+    indicator.hidden = false;
+}
+function getPresetEditorDraft(settings, key) {
+  const existing = presetEditorDrafts.get(key);
+  if (existing)
+    return existing;
+  const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
+  const draft = {
+    schemaText: JSON.stringify(preset.value, null, 2),
+    promptText: getPresetPrompt(settings, key),
+    schemaError: null
+  };
+  presetEditorDrafts.set(key, draft);
+  return draft;
+}
+function parseSchemaEditorText(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`Invalid JSON: ${error.message}`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Schema JSON must be an object.");
+  }
+  return parsed;
+}
+function updatePresetEditorControl(target) {
+  const settings = mergeSettings(state.settings);
+  const key = settings.schemaPreset;
+  const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
+  const draft = getPresetEditorDraft(settings, key);
+  if (target.dataset.presetEditor === "prompt") {
+    draft.promptText = target.value;
+    const nextPrompt = target.value || DEFAULT_PROMPT_JSON;
+    if (nextPrompt !== getPresetPrompt(settings, key)) {
+      settings.schemaPresets[key] = { ...preset, promptJson: nextPrompt };
+      updateSettingsDraft(settings);
+    }
+    return;
+  }
+  draft.schemaText = target.value;
+  try {
+    const schema = parseSchemaEditorText(target.value);
+    setPresetSchemaError(draft, null);
+    if (!jsonValuesEqual(schema, preset.value)) {
+      settings.schemaPresets[key] = { ...preset, value: schema };
+      updateSettingsDraft(settings);
+    }
+  } catch (error) {
+    settingsDraft.markChanged();
+    revealUnsavedSettings();
+    setPresetSchemaError(draft, error.message);
+  }
+}
+function setPresetSchemaError(draft, message) {
+  draft.schemaError = message;
+  const error = rootRef?.querySelector("[data-preset-schema-error]");
+  if (!error)
+    return;
+  error.hidden = !message;
+  error.textContent = message ?? "";
+}
+function applyPresetEditorDraft(settings, key) {
+  const draft = presetEditorDrafts.get(key);
+  const preset = settings.schemaPresets[key];
+  if (!draft || !preset)
+    return;
+  try {
+    const schema = parseSchemaEditorText(draft.schemaText);
+    draft.schemaError = null;
+    settings.schemaPresets[key] = {
+      ...preset,
+      value: schema,
+      promptJson: draft.promptText || DEFAULT_PROMPT_JSON
+    };
+  } catch (error) {
+    draft.schemaError = error.message;
+    throw error;
+  }
+}
+function ensureActivePresetEditorValid() {
+  const settings = mergeSettings(state.settings);
+  const key = settings.schemaPreset;
+  try {
+    applyPresetEditorDraft(settings, key);
+    state = { ...state, settings };
+    const draft = presetEditorDrafts.get(key);
+    if (draft)
+      setPresetSchemaError(draft, null);
+    return true;
+  } catch {
+    const draft = presetEditorDrafts.get(key);
+    if (draft)
+      setPresetSchemaError(draft, draft.schemaError);
+    return false;
+  }
+}
+function preparePresetDraftsForSave() {
+  const settings = mergeSettings(state.settings);
+  for (const key of presetEditorDrafts.keys()) {
+    if (!settings.schemaPresets[key])
+      continue;
+    try {
+      applyPresetEditorDraft(settings, key);
+    } catch {
+      settings.schemaPreset = key;
+      state = { ...state, settings };
+      renderDrawer();
+      return false;
+    }
+  }
+  state = { ...state, settings };
+  return true;
 }
 function handleChange(event) {
   const target = event.target;
@@ -903,6 +811,10 @@ function handleChange(event) {
 }
 function handleInput(event) {
   const target = event.target;
+  if (target.dataset.presetEditor) {
+    updatePresetEditorControl(target);
+    return;
+  }
   const key = target.dataset.setting;
   if (!key || target.type === "checkbox")
     return;
@@ -975,6 +887,7 @@ async function deletePreset() {
   if (!result?.confirmed)
     return;
   delete settings.schemaPresets[key];
+  presetEditorDrafts.delete(key);
   const fallbackKey = settings.schemaPresets.default ? "default" : Object.keys(settings.schemaPresets)[0];
   updateSettingsDraft({ ...settings, schemaPreset: fallbackKey });
   render();
@@ -1149,324 +1062,6 @@ function uniquePresetKey(base, presets) {
     index += 1;
   }
   return key;
-}
-function editActiveSchema() {
-  const settings = mergeSettings(state.settings);
-  const preset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
-  openVisualSchemaEditor(preset.value, (data) => {
-    if (jsonValuesEqual(data, preset.value))
-      return;
-    settings.schemaPresets[settings.schemaPreset] = { ...preset, value: data };
-    updateSettingsDraft(settings);
-    render();
-  });
-}
-function openVisualSchemaEditor(schema, onSave) {
-  const ctx = ctxRef;
-  if (!ctx)
-    return;
-  let model = null;
-  let unsupportedMessage = "";
-  try {
-    model = createVisualSchemaModel(schema);
-  } catch (error) {
-    unsupportedMessage = error.message;
-  }
-  const modal = ctx.ui.showModal({ title: "SceneMap Schema", width: 920, maxHeight: 820 });
-  let selectHandles = [];
-  const showError = (message) => {
-    const error = modal.root.querySelector(".scenemap-schema-error");
-    if (!error)
-      return;
-    error.hidden = false;
-    error.textContent = message;
-  };
-  const draw = (preserveScroll = true) => {
-    const scroller = modal.root.querySelector(".scenemap-schema-fields");
-    const scrollTop = preserveScroll ? scroller?.scrollTop ?? 0 : 0;
-    destroySelectHandles(selectHandles);
-    selectHandles = [];
-    modal.root.innerHTML = renderVisualSchemaEditor(model, unsupportedMessage);
-    const nextScroller = modal.root.querySelector(".scenemap-schema-fields");
-    if (nextScroller)
-      nextScroller.scrollTop = scrollTop;
-    if (model)
-      selectHandles = mountSchemaTypeSelects(modal.root, model, draw);
-  };
-  modal.onDismiss(() => {
-    destroySelectHandles(selectHandles);
-    selectHandles = [];
-  });
-  draw(false);
-  modal.root.addEventListener("input", (event) => {
-    if (!model)
-      return;
-    const target = event.target;
-    const input = target.dataset.schemaInput;
-    if (input === "root-title")
-      model.title = target.value;
-    if (input === "root-description")
-      model.description = target.value;
-    const node = target.dataset.nodeId ? findVisualSchemaNode(model, target.dataset.nodeId) : null;
-    if (!node)
-      return;
-    if (input === "field-name" && "name" in node)
-      node.name = target.value;
-    if (input === "description")
-      node.description = target.value;
-    if (input === "minimum")
-      node.minimum = optionalFiniteNumber(target.value);
-    if (input === "maximum")
-      node.maximum = optionalFiniteNumber(target.value);
-  });
-  modal.root.addEventListener("change", (event) => {
-    if (!model)
-      return;
-    const target = event.target;
-    const input = target.dataset.schemaInput;
-    if (input === "root-strict")
-      model.strict = target.checked;
-    const node = target.dataset.nodeId ? findVisualSchemaNode(model, target.dataset.nodeId) : null;
-    if (!node)
-      return;
-    if (input === "required" && "required" in node)
-      node.required = target.checked;
-    if (input === "strict")
-      node.strict = target.checked;
-  });
-  modal.root.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-schema-action]");
-    if (!button)
-      return;
-    const action = button.dataset.schemaAction;
-    try {
-      if (action === "cancel") {
-        modal.dismiss();
-        return;
-      }
-      if (action === "advanced") {
-        const current = model ? visualSchemaToJson(model) : schema;
-        openJsonEditor("SceneMap Schema — Advanced JSON", current, (data) => {
-          onSave(data);
-          modal.dismiss();
-        });
-        return;
-      }
-      if (!model)
-        return;
-      if (action === "save") {
-        onSave(visualSchemaToJson(model));
-        modal.dismiss();
-        return;
-      }
-      if (action === "add-root")
-        model.fields.push(createVisualSchemaField(model.fields.map((field) => field.name)));
-      const nodeId = button.dataset.nodeId;
-      if (action === "add-child" && nodeId) {
-        const node = findVisualSchemaNode(model, nodeId);
-        if (node?.type === "object")
-          node.fields.push(createVisualSchemaField(node.fields.map((field) => field.name)));
-      }
-      const fieldId = button.dataset.fieldId;
-      if (fieldId) {
-        const context = findVisualSchemaFieldContext(model.fields, fieldId);
-        if (context && action === "remove")
-          context.list.splice(context.index, 1);
-        if (context && action === "move-up")
-          moveItem(context.list, context.index, context.index - 1);
-        if (context && action === "move-down")
-          moveItem(context.list, context.index, context.index + 1);
-      }
-      draw();
-    } catch (error) {
-      showError(error.message);
-    }
-  });
-}
-function renderVisualSchemaEditor(model, unsupportedMessage) {
-  if (!model) {
-    return `
-      <div class="scenemap-schema-editor scenemap-schema-unsupported">
-        <p>This schema contains advanced structure that cannot be safely represented as a form.</p>
-        <div class="scenemap-schema-warning">${escapeHtml(unsupportedMessage)}</div>
-        <div class="scenemap-modal-actions">
-          <button type="button" class="scenemap-pill-action" data-schema-action="cancel">Cancel</button>
-          <button type="button" class="scenemap-pill-action scenemap-primary" data-schema-action="advanced">Advanced JSON</button>
-        </div>
-      </div>
-    `;
-  }
-  return `
-    <div class="scenemap-schema-editor">
-      <div class="scenemap-schema-topbar">
-        <p>Build the tracker fields without writing JSON.</p>
-        <button type="button" class="scenemap-pill-action" data-schema-action="advanced">Advanced JSON</button>
-      </div>
-      <div class="scenemap-schema-meta">
-        <label><span>Schema name</span><input data-schema-input="root-title" value="${escapeAttr(model.title)}" placeholder="SceneTracker"></label>
-        <label><span>Description</span><input data-schema-input="root-description" value="${escapeAttr(model.description)}" placeholder="What this tracker stores"></label>
-        ${renderSchemaCheckbox("root-strict", "Reject fields not listed below", model.strict)}
-      </div>
-      <div class="scenemap-schema-fields">
-        <div class="scenemap-schema-fields-heading">
-          <strong>Fields</strong>
-          <button type="button" class="scenemap-layout-add-btn" data-schema-action="add-root">${layoutIcon("plus")}<span>Add field</span></button>
-        </div>
-        ${model.fields.map((field, index) => renderVisualSchemaField(field, index, model.fields.length, 0)).join("")}
-        ${model.fields.length === 0 ? `<div class="scenemap-empty">Add the first field to this schema.</div>` : ""}
-      </div>
-      <div class="scenemap-modal-actions">
-        <button type="button" class="scenemap-pill-action" data-schema-action="cancel">Cancel</button>
-        <button type="button" class="scenemap-pill-action scenemap-primary" data-schema-action="save">Save schema</button>
-      </div>
-      <div class="scenemap-inline-error scenemap-schema-error" hidden></div>
-    </div>
-  `;
-}
-function renderVisualSchemaField(field, index, count, depth) {
-  return `
-    <article class="scenemap-schema-field" style="--schema-depth:${depth}">
-      <div class="scenemap-schema-field-head">
-        <label><span>Field name</span><input data-schema-input="field-name" data-node-id="${field.id}" value="${escapeAttr(field.name)}" placeholder="fieldName"></label>
-        <div class="scenemap-native-select" data-schema-type data-node-id="${field.id}"></div>
-        <div class="scenemap-schema-field-actions">
-          ${schemaIconButton("move-up", "Move up", "up", field.id, index === 0)}
-          ${schemaIconButton("move-down", "Move down", "down", field.id, index >= count - 1)}
-          ${schemaIconButton("remove", "Remove field", "trash", field.id)}
-        </div>
-      </div>
-      <label><span>Description for the AI</span><textarea rows="2" data-schema-input="description" data-node-id="${field.id}" placeholder="Explain what this field should contain">${escapeHtml(field.description)}</textarea></label>
-      <div class="scenemap-schema-flags">
-        ${renderSchemaCheckbox("required", "Required", field.required, field.id)}
-        ${schemaNodeHasAdvancedRules(field) ? `<span class="scenemap-schema-advanced-badge">Advanced rules preserved</span>` : ""}
-      </div>
-      ${renderVisualSchemaNodeDetails(field, depth)}
-    </article>
-  `;
-}
-function renderVisualSchemaNodeDetails(node, depth) {
-  if (node.type === "number" || node.type === "integer") {
-    return `
-      <div class="scenemap-schema-number-row">
-        <label><span>Minimum</span><input type="number" data-schema-input="minimum" data-node-id="${node.id}" value="${node.minimum ?? ""}" placeholder="No minimum"></label>
-        <label><span>Maximum</span><input type="number" data-schema-input="maximum" data-node-id="${node.id}" value="${node.maximum ?? ""}" placeholder="No maximum"></label>
-      </div>
-    `;
-  }
-  if (node.type === "object")
-    return renderVisualSchemaObject(node, depth);
-  if (node.type === "array") {
-    const item = node.item;
-    if (!item)
-      return "";
-    return `
-      <div class="scenemap-schema-array">
-        <div class="scenemap-schema-subheading"><strong>Array items</strong><div class="scenemap-native-select" data-schema-type data-node-id="${item.id}"></div></div>
-        ${renderVisualSchemaNodeDetails(item, depth + 1)}
-      </div>
-    `;
-  }
-  return "";
-}
-function renderVisualSchemaObject(node, depth) {
-  return `
-    <div class="scenemap-schema-object">
-      <div class="scenemap-schema-subheading">
-        ${renderSchemaCheckbox("strict", "Reject extra fields", node.strict, node.id)}
-        <button type="button" class="scenemap-layout-add-btn" data-schema-action="add-child" data-node-id="${node.id}">${layoutIcon("plus")}<span>Add nested field</span></button>
-      </div>
-      <div class="scenemap-schema-children">
-        ${node.fields.map((field, index) => renderVisualSchemaField(field, index, node.fields.length, depth + 1)).join("")}
-        ${node.fields.length === 0 ? `<div class="scenemap-empty">No nested fields yet.</div>` : ""}
-      </div>
-    </div>
-  `;
-}
-function renderSchemaCheckbox(input, label, checked, nodeId) {
-  return `<label class="scenemap-schema-check"><input type="checkbox" data-schema-input="${input}" ${nodeId ? `data-node-id="${nodeId}"` : ""} ${checked ? "checked" : ""}><span>${escapeHtml(label)}</span></label>`;
-}
-function schemaIconButton(action, label, icon, fieldId, disabled = false) {
-  return `<button type="button" class="scenemap-layout-icon-btn" data-schema-action="${action}" data-field-id="${fieldId}" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}" ${disabled ? "disabled" : ""}>${layoutIcon(icon)}</button>`;
-}
-function mountSchemaTypeSelects(root, model, redraw) {
-  const ctx = ctxRef;
-  if (!ctx)
-    return [];
-  const options = [
-    { value: "string", label: "Text" },
-    { value: "integer", label: "Whole number" },
-    { value: "number", label: "Number" },
-    { value: "boolean", label: "Yes / No" },
-    { value: "object", label: "Group of fields" },
-    { value: "array", label: "List" }
-  ];
-  const handles = [];
-  for (const target of root.querySelectorAll("[data-schema-type]")) {
-    const node = findVisualSchemaNode(model, target.dataset.nodeId ?? "");
-    if (!node)
-      continue;
-    handles.push(ctx.components.mountSelect(target, {
-      options,
-      value: node.type,
-      portal: true,
-      searchThreshold: Number.MAX_SAFE_INTEGER,
-      ariaLabel: "Field type",
-      onChange: (value) => {
-        setVisualSchemaNodeType(node, value);
-        queueMicrotask(() => redraw());
-      }
-    }));
-  }
-  return handles;
-}
-function findVisualSchemaNode(model, id) {
-  for (const field of model.fields) {
-    const found = findVisualSchemaNodeInNode(field, id);
-    if (found)
-      return found;
-  }
-  return null;
-}
-function findVisualSchemaNodeInNode(node, id) {
-  if (node.id === id)
-    return node;
-  for (const field of node.fields) {
-    const found = findVisualSchemaNodeInNode(field, id);
-    if (found)
-      return found;
-  }
-  return node.item ? findVisualSchemaNodeInNode(node.item, id) : null;
-}
-function findVisualSchemaFieldContext(fields, id) {
-  const index = fields.findIndex((field) => field.id === id);
-  if (index >= 0)
-    return { list: fields, index };
-  for (const field of fields) {
-    const nested = findVisualSchemaFieldContext(field.fields, id) ?? (field.item ? findVisualSchemaFieldContext(field.item.fields, id) : null);
-    if (nested)
-      return nested;
-  }
-  return null;
-}
-function optionalFiniteNumber(value) {
-  if (!value.trim())
-    return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-function editPrompt() {
-  const settings = mergeSettings(state.settings);
-  const key = settings.schemaPreset;
-  const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
-  const currentPrompt = getPresetPrompt(settings, key);
-  openTextEditor("SceneMap Prompt", currentPrompt, (text) => {
-    const nextPrompt = text || DEFAULT_PROMPT_JSON;
-    if (nextPrompt === currentPrompt)
-      return;
-    settings.schemaPresets[key] = { ...preset, promptJson: nextPrompt };
-    updateSettingsDraft(settings);
-    render();
-  });
 }
 function editLayout() {
   const settings = mergeSettings(state.settings);
@@ -2247,9 +1842,18 @@ var styles = `
 .scenemap-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--lumiverse-text-muted); transition: transform .16s ease, background .16s ease; }
 .scenemap-switch-row input:checked + .scenemap-switch { background: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
 .scenemap-switch-row input:checked + .scenemap-switch::after { transform: translateX(14px); background: var(--lumiverse-primary-contrast, #fff); }
-.scenemap-settings-preset-row label { margin: 0 0 10px; min-width: 0; }
-.scenemap-settings-preset-actions, .scenemap-settings-actions-left { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.scenemap-settings-preset-actions .scenemap-pill-action, .scenemap-settings-actions-left .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; padding: 6px 11px !important; min-height: 32px; }
+.scenemap-settings-preset-row label { margin: 0; min-width: 0; }
+.scenemap-preset-toolbar { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
+.scenemap-preset-select { flex: 1 1 220px; }
+.scenemap-settings-preset-actions, .scenemap-settings-actions-left { display: flex; flex: 0 1 auto; flex-wrap: wrap; gap: 6px; align-items: center; }
+.scenemap-settings-preset-actions .scenemap-pill-action, .scenemap-settings-actions-left .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; padding: 5px 9px !important; min-height: 30px; }
+.scenemap-preset-editor { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--lumiverse-border); }
+.scenemap-preset-editor label { display: flex; flex-direction: column; gap: 6px; color: var(--lumiverse-text-muted); font-size: 12px; }
+.scenemap-preset-editor textarea { width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; border: 1px solid var(--lumiverse-border); border-radius: 8px; background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 10px 11px; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.scenemap-preset-editor textarea[data-preset-editor="prompt"] { min-height: 150px; font-family: inherit; }
+.scenemap-preset-editor textarea:focus { outline: none; border-color: var(--lumiverse-primary, var(--lumiverse-accent)); box-shadow: 0 0 0 1px var(--lumiverse-primary-020, transparent); }
+.scenemap-preset-schema-error { margin-top: -4px; }
+.scenemap-preset-layout-row { display: flex; justify-content: flex-end; }
 .scenemap-settings-save-bar { flex: 0 0 auto; display: flex; justify-content: flex-end; padding-top: 12px; border-top: 1px solid var(--lumiverse-border); }
 .scenemap-settings-save-bar .scenemap-primary { min-width: 130px; }
 .scenemap-settings-shell input:not([type="checkbox"]), .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-name-editor input, .scenemap-schema-editor input:not([type="checkbox"]), .scenemap-schema-editor textarea {
