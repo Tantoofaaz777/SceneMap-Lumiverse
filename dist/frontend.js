@@ -5149,21 +5149,6 @@ function editLayout() {
         field.fields[childIndex].label = target.value;
     }
   });
-  modal.root.addEventListener("change", (event) => {
-    const target = event.target;
-    const sectionIndex = readIndex(target.dataset.section);
-    const fieldIndex = readIndex(target.dataset.field);
-    const childIndex = readIndex(target.dataset.child);
-    if (sectionIndex === null || fieldIndex === null)
-      return;
-    const field = workingLayout.sections[sectionIndex].fields[fieldIndex];
-    if (target.dataset.layoutInput === "field-center") {
-      field.center = target.checked;
-    }
-    if (target.dataset.layoutInput === "child-center" && childIndex !== null && field.fields?.[childIndex]) {
-      field.fields[childIndex].center = target.checked;
-    }
-  });
   modal.root.addEventListener("keydown", (event) => {
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown")
       return;
@@ -5291,15 +5276,17 @@ function renderLayoutField(field, sectionIndex, fieldIndex, options) {
   const childEditor = field.display === "character_cards" ? renderChildFieldEditor(field, option2?.children ?? [], sectionIndex, fieldIndex) : "";
   return `
     <article class="scenemap-layout-field ${missingFromSchema ? "is-missing-schema-field" : ""}" data-layout-field-item>
-      <div class="scenemap-layout-field-row">
+      <div class="scenemap-layout-field-row ${field.display === "chips" ? "has-chip-center" : ""}">
         ${layoutDragHandle("field", "Drag to reorder field", { section: sectionIndex, field: fieldIndex })}
         <div class="scenemap-native-select" data-layout-select="field-path" data-section="${sectionIndex}" data-field="${fieldIndex}"></div>
         <input aria-label="Label" data-layout-input="field-label" data-section="${sectionIndex}" data-field="${fieldIndex}" value="${escapeAttr(field.label ?? option2?.label ?? "")}" placeholder="Label">
-        <div class="scenemap-native-select" data-layout-select="field-display" data-section="${sectionIndex}" data-field="${fieldIndex}"></div>
+        <div class="scenemap-layout-display-controls ${field.display === "chips" ? "has-center-select" : ""}">
+          <div class="scenemap-native-select" data-layout-select="field-display" data-section="${sectionIndex}" data-field="${fieldIndex}"></div>
+          ${field.display === "chips" ? `<div class="scenemap-native-select" data-layout-select="field-center" data-section="${sectionIndex}" data-field="${fieldIndex}"></div>` : ""}
+        </div>
         ${iconButton("remove-field", "Remove field", "trash", { section: sectionIndex, field: fieldIndex })}
       </div>
       ${missingFromSchema ? `<div class="scenemap-layout-schema-warning" role="status">Field “${escapeHtml(field.path)}” no longer exists in this schema.</div>` : ""}
-      ${renderChipCenterToggle("field-center", field.center === true, { section: sectionIndex, field: fieldIndex }, field.display === "chips")}
       ${childEditor}
     </article>
   `;
@@ -5323,33 +5310,18 @@ function renderChildField(child, childIndex, sectionIndex, fieldIndex, options) 
   const missingFromSchema = !findFieldOption(options, child.path);
   return `
     <div class="scenemap-layout-child ${missingFromSchema ? "is-missing-schema-field" : ""}" data-layout-child-item>
-      <div class="scenemap-layout-child-row">
+      <div class="scenemap-layout-child-row ${child.display === "chips" ? "has-chip-center" : ""}">
         ${layoutDragHandle("child", "Drag to reorder card field", { section: sectionIndex, field: fieldIndex, child: childIndex })}
         <div class="scenemap-native-select" data-layout-select="child-path" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>
         <input aria-label="Card field label" data-layout-input="child-label" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}" value="${escapeAttr(child.label ?? "")}" placeholder="Label">
-        <div class="scenemap-native-select" data-layout-select="child-display" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>
+        <div class="scenemap-layout-display-controls ${child.display === "chips" ? "has-center-select" : ""}">
+          <div class="scenemap-native-select" data-layout-select="child-display" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>
+          ${child.display === "chips" ? `<div class="scenemap-native-select" data-layout-select="child-center" data-section="${sectionIndex}" data-field="${fieldIndex}" data-child="${childIndex}"></div>` : ""}
+        </div>
         ${iconButton("remove-child", "Remove card field", "trash", { section: sectionIndex, field: fieldIndex, child: childIndex })}
       </div>
       ${missingFromSchema ? `<div class="scenemap-layout-schema-warning" role="status">Card field “${escapeHtml(child.path)}” no longer exists in this schema.</div>` : ""}
-      ${renderChipCenterToggle("child-center", child.center === true, { section: sectionIndex, field: fieldIndex, child: childIndex }, child.display === "chips")}
     </div>
-  `;
-}
-function renderChipCenterToggle(input, checked, indexes, visible) {
-  if (!visible)
-    return "";
-  return `
-    <label class="scenemap-layout-check-row">
-      <input
-        type="checkbox"
-        data-layout-input="${input}"
-        data-section="${indexes.section}"
-        data-field="${indexes.field}"
-        ${indexes.child !== undefined ? `data-child="${indexes.child}"` : ""}
-        ${checked ? "checked" : ""}
-      >
-      <span>Center chips</span>
-    </label>
   `;
 }
 function getDisplayOptions(allowCards) {
@@ -5397,6 +5369,10 @@ function mountLayoutSelects(root, layout, options, redraw) {
       value = field.display ?? option2?.display ?? "text";
       ariaLabel = "Display";
       selectOptions = getDisplayOptions(!!option2?.children?.length);
+    } else if (kind === "field-center") {
+      value = field.center === true ? "yes" : "no";
+      ariaLabel = "Center chips";
+      selectOptions = getChipCenterOptions();
     } else if (kind === "child-path" && childIndex !== null) {
       const child = field.fields?.[childIndex];
       if (!child)
@@ -5417,6 +5393,13 @@ function mountLayoutSelects(root, layout, options, redraw) {
       value = child.display ?? "text";
       ariaLabel = "Card field display";
       selectOptions = getDisplayOptions(false);
+    } else if (kind === "child-center" && childIndex !== null) {
+      const child = field.fields?.[childIndex];
+      if (!child)
+        continue;
+      value = child.center === true ? "yes" : "no";
+      ariaLabel = "Center card field chips";
+      selectOptions = getChipCenterOptions();
     } else {
       continue;
     }
@@ -5441,6 +5424,9 @@ function mountLayoutSelects(root, layout, options, redraw) {
           }));
         } else if (kind === "field-display") {
           field.display = nextValue;
+        } else if (kind === "field-center") {
+          field.center = nextValue === "yes";
+          return;
         } else if (kind === "child-path" && childIndex !== null && field.fields?.[childIndex]) {
           const parentOption = findFieldOption(options, field.path);
           const option2 = parentOption?.children?.find((child) => child.path === nextValue);
@@ -5449,12 +5435,21 @@ function mountLayoutSelects(root, layout, options, redraw) {
           field.fields[childIndex].display = option2?.display === "character_cards" ? "text" : option2?.display ?? "text";
         } else if (kind === "child-display" && childIndex !== null && field.fields?.[childIndex]) {
           field.fields[childIndex].display = nextValue;
+        } else if (kind === "child-center" && childIndex !== null && field.fields?.[childIndex]) {
+          field.fields[childIndex].center = nextValue === "yes";
+          return;
         }
         queueMicrotask(() => redraw());
       }
     }));
   }
   return handles;
+}
+function getChipCenterOptions() {
+  return [
+    { value: "yes", label: "Center - Yes" },
+    { value: "no", label: "Center - No" }
+  ];
 }
 function mountLayoutSortables(root, layout, redraw) {
   const instances = [];
@@ -6206,12 +6201,13 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-layout-section { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: var(--lumiverse-radius, 8px); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .scenemap-layout-section-header { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; align-items: end; }
 .scenemap-layout-section label, .scenemap-layout-field label { display: flex; flex-direction: column; gap: 5px; color: var(--lumiverse-text-muted); font-size: 12px; }
-.scenemap-layout-section label.scenemap-layout-check-row, .scenemap-layout-field label.scenemap-layout-check-row { display: inline-flex; flex-direction: row; align-items: center; gap: 7px; margin: 0; }
-.scenemap-layout-check-row input { width: auto !important; margin: 0; }
 .scenemap-layout-fields { display: flex; flex-direction: column; gap: 7px; }
 .scenemap-layout-field { display: flex; flex-direction: column; gap: 8px; }
 .scenemap-layout-schema-warning { border-left: 2px solid var(--lumiverse-warning, #f59e0b); color: var(--lumiverse-warning, #f59e0b); padding: 4px 7px; font-size: 11px; line-height: 1.4; }
 .scenemap-layout-field-row { display: grid; grid-template-columns: auto minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto; gap: 6px; align-items: center; }
+.scenemap-layout-field-row.has-chip-center, .scenemap-layout-child-row.has-chip-center { grid-template-columns: auto minmax(120px, 1fr) minmax(110px, .8fr) minmax(210px, 1.1fr) auto; }
+.scenemap-layout-display-controls { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.scenemap-layout-display-controls.has-center-select { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .scenemap-layout-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .scenemap-layout-actions button, .scenemap-layout-child-row button { padding: 5px 8px; font-size: 12px; }
 .scenemap-layout-icon-btn { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
@@ -6253,6 +6249,7 @@ body.scenemap-layout-is-dragging, body.scenemap-layout-is-dragging * { cursor: g
   .scenemap-layout-section-header .scenemap-layout-actions { grid-column: 2; flex-wrap: nowrap; }
   .scenemap-layout-section-header .scenemap-layout-icon-btn, .scenemap-layout-section-header .scenemap-layout-drag-handle { width: 44px; height: 44px; min-width: 44px; }
   .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; }
+  .scenemap-layout-field-row.has-chip-center, .scenemap-layout-child-row.has-chip-center { grid-template-columns: 44px minmax(0, 1fr) 44px; }
   .scenemap-layout-editor .scenemap-layout-drag-handle { width: 44px; height: 44px; min-width: 44px; grid-column: 1; grid-row: 1; }
   .scenemap-layout-field-row > [data-layout-select="field-path"],
   .scenemap-layout-child-row > [data-layout-select="child-path"] { grid-column: 2; grid-row: 1; }
@@ -6260,8 +6257,8 @@ body.scenemap-layout-is-dragging, body.scenemap-layout-is-dragging * { cursor: g
   .scenemap-layout-child-row > .scenemap-layout-icon-btn { grid-column: 3; grid-row: 1; width: 44px; height: 44px; }
   .scenemap-layout-field-row > input,
   .scenemap-layout-child-row > input { grid-column: 1 / -1; grid-row: 2; }
-  .scenemap-layout-field-row > [data-layout-select="field-display"],
-  .scenemap-layout-child-row > [data-layout-select="child-display"] { grid-column: 1 / -1; grid-row: 3; }
+  .scenemap-layout-field-row > .scenemap-layout-display-controls,
+  .scenemap-layout-child-row > .scenemap-layout-display-controls { grid-column: 1 / -1; grid-row: 3; }
   .scenemap-settings-actions-left { justify-content: flex-start; }
   .scenemap-layout-actions { justify-content: flex-end; }
   .scenemap-layout-intro { align-items: stretch; flex-direction: column; }
