@@ -45,7 +45,6 @@ let dockPanelSize = 380;
 const decoratedDockResizeHandles = new Set<HTMLElement>();
 let dockPanelCreatedAt = 0;
 let dockPanelError: string | null = null;
-let isRefreshingState = false;
 let isGenerationRequestPending = false;
 let editorRequestSeq = 0;
 let settingsSaveRequestSeq = 0;
@@ -118,7 +117,6 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const offBackend = ctx.onBackendMessage((payload: any) => {
     if (payload?.type === "state") {
-      isRefreshingState = false;
       isGenerationRequestPending = false;
       const incomingState = payload.state as SceneMapState;
       if (typeof payload.automaticSettingsSaveRequestId === "string") {
@@ -137,7 +135,6 @@ export function setup(ctx: SpindleFrontendContext) {
       return;
     }
     if (payload?.type === "error") {
-      isRefreshingState = false;
       isGenerationRequestPending = false;
       const saveFailed = typeof payload.requestId === "string" && settingsDraft.fail(payload.requestId);
       const automaticSaveFailed = typeof payload.requestId === "string" && automaticSettingsDraft.fail(payload.requestId);
@@ -366,11 +363,7 @@ function send(payload: Record<string, unknown>) {
   ctxRef?.sendToBackend(payload);
 }
 
-function requestState(showRefresh = false) {
-  if (showRefresh) {
-    isRefreshingState = true;
-    renderTrackerSurfaces();
-  }
+function requestState() {
   send({ type: "get_state" });
 }
 
@@ -475,7 +468,6 @@ function trackerPanelMarkup(): string {
         </button>
         <button class="scenemap-pill-action scenemap-tracker-action" data-action="edit" ${latest?.schemaMatchesCurrent ? "" : "disabled"}>Edit</button>
         <button class="scenemap-pill-action scenemap-tracker-action scenemap-danger" data-action="delete" ${latest ? "" : "disabled"}>Delete</button>
-        <button class="scenemap-pill-action scenemap-pill-icon ${isRefreshingState ? "is-refreshing" : ""}" data-action="refresh" title="Refresh">${refreshSvg()}</button>
       </header>
 
       <p class="scenemap-status ${state.generationActive ? "is-generating" : ""}">${statusMarkup()}</p>
@@ -734,7 +726,6 @@ function handleClick(event: Event) {
     drawerView = "settings";
     renderDrawerContent();
   }
-  if (action === "refresh") requestState(true);
   if (action === "generate") {
     if (isGenerationRequestPending) return;
     isGenerationRequestPending = true;
@@ -2159,8 +2150,6 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
 .scenemap-pill-action { border-radius: var(--lumiverse-radius, 8px) !important; padding: 7px 13px !important; min-height: 34px; }
 .scenemap-tracker-action { min-height: 30px; padding: 5px 10px !important; font-size: calc(12px * var(--lumiverse-font-scale, 1)); }
-.scenemap-pill-icon { width: 34px; min-width: 34px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; }
-.scenemap-pill-icon.is-refreshing svg { animation: scenemap-spin .9s linear infinite; }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: var(--lumiverse-radius, 8px); padding: 10px; font-size: 12px; }
 @media (max-width: 760px) {
   .scenemap-layout-section-header { grid-template-columns: 1fr; align-items: stretch; }
