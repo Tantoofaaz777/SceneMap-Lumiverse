@@ -261,6 +261,42 @@ export function mergeSettings(value: Partial<SceneMapSettings> | null | undefine
   };
 }
 
+export function mergeAutomaticSettingsPatch(currentValue: SceneMapSettings, value: unknown): SceneMapSettings {
+  const current = mergeSettings(currentValue);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return current;
+  const patch = value as Record<string, unknown>;
+  const next = { ...current };
+  if (typeof patch.connectionId === "string") next.connectionId = patch.connectionId;
+  if (typeof patch.autoGenerateAiTrackers === "boolean") next.autoGenerateAiTrackers = patch.autoGenerateAiTrackers;
+  if (typeof patch.autoGenerateInterval === "number" && Number.isFinite(patch.autoGenerateInterval)) {
+    next.autoGenerateInterval = Math.max(1, Math.floor(patch.autoGenerateInterval));
+  }
+  if (typeof patch.maxResponseTokens === "number" && Number.isFinite(patch.maxResponseTokens)) {
+    next.maxResponseTokens = Math.max(0, Math.floor(patch.maxResponseTokens));
+  }
+  if (patch.temperature === null || (typeof patch.temperature === "number" && Number.isFinite(patch.temperature))) {
+    next.temperature = patch.temperature;
+  }
+  if (patch.topP === null || (typeof patch.topP === "number" && Number.isFinite(patch.topP))) {
+    next.topP = patch.topP;
+  }
+  if (typeof patch.includeLastXMessages === "number" && Number.isFinite(patch.includeLastXMessages)) {
+    next.includeLastXMessages = Math.max(0, Math.floor(patch.includeLastXMessages));
+  }
+  if (typeof patch.showInputBarButton === "boolean") next.showInputBarButton = patch.showInputBarButton;
+  return mergeSettings(next);
+}
+
+export function mergePresetSettings(currentValue: SceneMapSettings, incomingValue: SceneMapSettings): SceneMapSettings {
+  const current = mergeSettings(currentValue);
+  const incoming = mergeSettings(incomingValue);
+  return mergeSettings({
+    ...current,
+    schemaPreset: incoming.schemaPreset,
+    schemaPresets: incoming.schemaPresets,
+  });
+}
+
 export function getPresetPrompt(settings: SceneMapSettings, presetKey = settings.schemaPreset): string {
   const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   return typeof preset?.promptJson === "string" ? preset.promptJson : settings.promptJson;

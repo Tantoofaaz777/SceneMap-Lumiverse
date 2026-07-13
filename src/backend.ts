@@ -5,6 +5,8 @@ import {
   defaultSettings,
   getPresetLayout,
   getPresetPrompt,
+  mergeAutomaticSettingsPatch,
+  mergePresetSettings,
   mergeSettings,
   renderPrompt,
   resolveSamplingParameter,
@@ -64,6 +66,7 @@ type ConnectionSummary = {
 
 const activeGenerations = new GenerationRegistry();
 const statePushQueue = new KeyedAsyncQueue();
+const settingsSaveQueue = new KeyedAsyncQueue();
 const macroLayoutsByChatId = new Map<string, ReturnType<typeof getPresetLayout>>();
 const alternateCharacterFields = ["description", "personality", "scenario"] as const;
 
@@ -90,6 +93,16 @@ async function loadSettings(userId?: string): Promise<SceneMapSettings> {
 
 async function saveSettings(settings: SceneMapSettings, userId: string) {
   await spindle.userStorage.setJson(SETTINGS_PATH, mergeSettings(settings), { indent: 2, userId });
+}
+
+async function saveAutomaticSettingsPatch(value: unknown, userId: string) {
+  const current = await loadSettings(userId);
+  await saveSettings(mergeAutomaticSettingsPatch(current, value), userId);
+}
+
+async function savePresetSettings(settings: SceneMapSettings, userId: string) {
+  const current = await loadSettings(userId);
+  await saveSettings(mergePresetSettings(current, settings), userId);
 }
 
 function getActiveSwipeId(message: ChatMessage | null | undefined): number {
@@ -686,11 +699,21 @@ spindle.onFrontendMessage(async (payload: any, userId?: string) => {
         await pushState(userId);
         break;
       case "save_settings":
-        await saveSettings(payload.settings, userId);
+        await settingsSaveQueue.enqueue(userId, () => saveSettings(payload.settings, userId));
         await pushState(userId, {
           settingsSaveRequestId: typeof payload.requestId === "string" ? payload.requestId : "",
         });
         spindle.toast.success("Settings saved.", { title: "SceneMap", userId });
+        break;
+      case "save_preset_settings":
+        await settingsSaveQueue.enqueue(userId, () => savePresetSettings(payload.settings, userId));
+        await pushState(userId, {
+          settingsSaveRequestId: typeof payload.requestId === "string" ? payload.requestId : "",
+        });
+        spindle.toast.success("Preset saved.", { title: "SceneMap", userId });
+        break;
+      case "save_automatic_settings":
+        await settingsSaveQueue.enqueue(userId, () => saveAutomaticSettingsPatch(payload.settings, userId));
         break;
       case "set_chat_preset": {
         const { chat } = await getActiveContext(userId);

@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SCHEMA_VALUE,
   jsonValuesEqual,
+  mergeAutomaticSettingsPatch,
+  mergePresetSettings,
   mergeSettings,
   resolveSamplingParameter,
   schemaToExample,
@@ -101,6 +103,51 @@ describe("mergeSettings", () => {
 
     expect(settings.temperature).toBeNull();
     expect(settings.topP).toBeNull();
+  });
+});
+
+describe("split settings persistence", () => {
+  test("automatic settings cannot overwrite preset edits", () => {
+    const current = mergeSettings({
+      schemaPresets: {
+        default: {
+          name: "Custom",
+          value: { type: "object", properties: { mood: { type: "string" } } },
+        },
+      },
+    });
+
+    const next = mergeAutomaticSettingsPatch(current, {
+      temperature: 0.35,
+      schemaPreset: "attacker-controlled",
+      schemaPresets: {},
+    });
+
+    expect(next.temperature).toBe(0.35);
+    expect(next.schemaPreset).toBe(current.schemaPreset);
+    expect(next.schemaPresets).toEqual(current.schemaPresets);
+  });
+
+  test("saving a preset cannot overwrite automatic settings", () => {
+    const current = mergeSettings({ temperature: 0.4, showInputBarButton: false });
+    const incoming = mergeSettings({
+      ...current,
+      temperature: 1.8,
+      showInputBarButton: true,
+      schemaPresets: {
+        ...current.schemaPresets,
+        default: {
+          ...current.schemaPresets.default,
+          promptJson: "Updated prompt",
+        },
+      },
+    });
+
+    const next = mergePresetSettings(current, incoming);
+
+    expect(next.temperature).toBe(0.4);
+    expect(next.showInputBarButton).toBe(false);
+    expect(next.schemaPresets.default.promptJson).toBe("Updated prompt");
   });
 });
 

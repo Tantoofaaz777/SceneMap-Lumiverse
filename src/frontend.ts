@@ -52,6 +52,18 @@ let isGenerationRequestPending = false;
 let editorRequestSeq = 0;
 let settingsSaveRequestSeq = 0;
 let drawerSelectHandles: SpindleSelectHandle[] = [];
+let automaticSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingAutomaticSettings: Partial<SceneMapSettings> = {};
+
+type AutomaticallySavedSetting =
+  | "connectionId"
+  | "autoGenerateAiTrackers"
+  | "autoGenerateInterval"
+  | "maxResponseTokens"
+  | "temperature"
+  | "topP"
+  | "includeLastXMessages"
+  | "showInputBarButton";
 
 type PresetEditorDraft = {
   schemaText: string;
@@ -76,6 +88,9 @@ const backSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" 
 
 export function setup(ctx: SpindleFrontendContext) {
   settingsDraft.reset();
+  pendingAutomaticSettings = {};
+  if (automaticSaveTimer) clearTimeout(automaticSaveTimer);
+  automaticSaveTimer = null;
   ctxRef = ctx;
   const removeStyle = ctx.dom.addStyle(styles);
   const tab = ctx.ui.registerDrawerTab({
@@ -145,6 +160,7 @@ export function setup(ctx: SpindleFrontendContext) {
   requestState();
 
   return () => {
+    flushAutomaticSettingsSave();
     rootRef?.removeEventListener("click", handleClick);
     rootRef?.removeEventListener("change", handleChange);
     rootRef?.removeEventListener("input", handleInput);
@@ -164,6 +180,7 @@ export function setup(ctx: SpindleFrontendContext) {
     isGenerationRequestPending = false;
     settingsDraft.reset();
     presetEditorDrafts.clear();
+    pendingAutomaticSettings = {};
   };
 }
 
@@ -253,12 +270,12 @@ function renderDrawerSettings() {
         <button class="scenemap-pill-action scenemap-pill-icon" data-action="close-settings" title="Back to SceneMap" aria-label="Back to SceneMap">${backSvg}</button>
         <div>
           <h2>Settings</h2>
-          <p data-settings-dirty ${settingsDraft.dirty ? "" : "hidden"}>Unsaved changes</p>
+          <p data-settings-dirty ${settingsDraft.dirty ? "" : "hidden"}>Unsaved preset changes</p>
         </div>
       </header>
       <section class="scenemap-settings-scroll">
         <div class="scenemap-settings-group">
-          <h3>Generation</h3>
+          <h3>Generation <span class="scenemap-settings-save-mode">Auto-save</span></h3>
       <label>
         <span>Connection</span>
         <div class="scenemap-native-select" data-native-setting="connectionId"></div>
@@ -294,7 +311,7 @@ function renderDrawerSettings() {
       </label>
         </div>
         <div class="scenemap-settings-group">
-          <h3>Interface</h3>
+          <h3>Interface <span class="scenemap-settings-save-mode">Auto-save</span></h3>
           <label class="scenemap-switch-row">
             <span>Show input bar button</span>
             <input type="checkbox" data-setting="showInputBarButton" ${settings.showInputBarButton ? "checked" : ""}>
@@ -328,13 +345,11 @@ function renderDrawerSettings() {
             </label>
             <div class="scenemap-preset-layout-row">
               <button class="scenemap-pill-action" data-action="edit-layout">Layout</button>
+              <button class="scenemap-pill-action scenemap-primary" data-action="save-preset" ${settingsDraft.saving ? "disabled" : ""}>${settingsDraft.saving ? "Saving..." : "Save preset"}</button>
             </div>
           </div>
         </div>
       </section>
-      <footer class="scenemap-settings-save-bar">
-          <button class="scenemap-pill-action scenemap-primary" data-action="save-settings" ${settingsDraft.saving ? "disabled" : ""}>${settingsDraft.saving ? "Saving..." : "Save settings"}</button>
-      </footer>
     </div>
   `;
   mountSettingsSelects(settings);
@@ -396,8 +411,33 @@ function updateNativeSetting(key: "connectionId" | "includeLastXMessages" | "sch
   const settings = mergeSettings(state.settings);
   if (key === "includeLastXMessages") settings.includeLastXMessages = Math.max(0, Math.floor(Number(value) || 0));
   else settings[key] = value;
-  updateSettingsDraft(settings);
-  if (key === "schemaPreset") queueMicrotask(() => render());
+  if (key === "schemaPreset") {
+    updateSettingsDraft(settings);
+    queueMicrotask(() => render());
+    return;
+  }
+  state = { ...state, settings };
+  queueAutomaticSettingsSave(settings, key, true);
+}
+
+function queueAutomaticSettingsSave(settings: SceneMapSettings, key: AutomaticallySavedSetting, immediate: boolean) {
+  (pendingAutomaticSettings as Record<string, unknown>)[key] = settings[key];
+  if (automaticSaveTimer) clearTimeout(automaticSaveTimer);
+  automaticSaveTimer = null;
+  if (immediate) {
+    flushAutomaticSettingsSave();
+    return;
+  }
+  automaticSaveTimer = setTimeout(flushAutomaticSettingsSave, 450);
+}
+
+function flushAutomaticSettingsSave() {
+  if (automaticSaveTimer) clearTimeout(automaticSaveTimer);
+  automaticSaveTimer = null;
+  if (Object.keys(pendingAutomaticSettings).length === 0) return;
+  const settings = pendingAutomaticSettings;
+  pendingAutomaticSettings = {};
+  send({ type: "save_automatic_settings", settings });
 }
 
 function destroySelectHandles(handles: SpindleSelectHandle[]) {
@@ -460,12 +500,13 @@ function handleClick(event: Event) {
   if (action === "export-preset" && ensureActivePresetEditorValid()) exportPreset();
   if (action === "delete-preset") deletePreset();
   if (action === "edit-layout" && ensureActivePresetEditorValid()) editLayout();
-  if (action === "save-settings") {
+  if (action === "save-preset") {
+    flushAutomaticSettingsSave();
     if (!preparePresetDraftsForSave()) return;
     const requestId = `settings-${Date.now()}-${++settingsSaveRequestSeq}`;
     if (!settingsDraft.beginSave(requestId)) return;
     renderDrawer();
-    send({ type: "save_settings", requestId, settings: state.settings });
+    send({ type: "save_preset_settings", requestId, settings: state.settings });
   }
 }
 
@@ -597,9 +638,9 @@ function preparePresetDraftsForSave(): boolean {
 
 function handleChange(event: Event) {
   const target = event.target as HTMLInputElement | HTMLSelectElement;
-  const key = target.dataset.setting as keyof SceneMapSettings | undefined;
-  if (!key) return;
-  updateSettingFromControl(target as HTMLInputElement, key);
+  const key = target.dataset.setting;
+  if (!isAutomaticallySavedSetting(key)) return;
+  updateSettingFromControl(target, key, true);
 }
 
 function handleInput(event: Event) {
@@ -608,12 +649,27 @@ function handleInput(event: Event) {
     updatePresetEditorControl(target);
     return;
   }
-  const key = target.dataset.setting as keyof SceneMapSettings | undefined;
-  if (!key || target.type === "checkbox") return;
-  updateSettingFromControl(target as HTMLInputElement, key);
+  const key = target.dataset.setting;
+  if (!isAutomaticallySavedSetting(key) || target.type === "checkbox") return;
+  updateSettingFromControl(target as HTMLInputElement, key, false);
 }
 
-function updateSettingFromControl(target: HTMLInputElement | HTMLSelectElement, key: keyof SceneMapSettings) {
+function isAutomaticallySavedSetting(key: string | undefined): key is AutomaticallySavedSetting {
+  return key === "connectionId"
+    || key === "autoGenerateAiTrackers"
+    || key === "autoGenerateInterval"
+    || key === "maxResponseTokens"
+    || key === "temperature"
+    || key === "topP"
+    || key === "includeLastXMessages"
+    || key === "showInputBarButton";
+}
+
+function updateSettingFromControl(
+  target: HTMLInputElement | HTMLSelectElement,
+  key: AutomaticallySavedSetting,
+  immediate: boolean,
+) {
   const settings = mergeSettings(state.settings);
   if (key === "autoGenerateAiTrackers") {
     settings.autoGenerateAiTrackers = (target as HTMLInputElement).checked;
@@ -630,9 +686,9 @@ function updateSettingFromControl(target: HTMLInputElement | HTMLSelectElement, 
   } else {
     (settings as any)[key] = target.value;
   }
-  updateSettingsDraft(settings);
-  if (key === "schemaPreset") render();
-  if (key === "showInputBarButton") render();
+  state = { ...state, settings };
+  queueAutomaticSettingsSave(settings, key, immediate);
+  if (key === "showInputBarButton") renderChatToolbar();
 }
 
 function createPreset() {
@@ -1253,9 +1309,6 @@ function editLayout() {
       if (action === "move-child-down" && sectionIndex !== null && fieldIndex !== null && childIndex !== null) {
         moveItem(workingLayout.sections[sectionIndex].fields[fieldIndex].fields ?? [], childIndex, childIndex + 1);
       }
-      if (action === "reset-layout") {
-        workingLayout.sections = createSchemaDefaultLayout(preset.value).sections;
-      }
       if (action === "cancel") {
         modal.dismiss();
         return;
@@ -1301,7 +1354,6 @@ function renderLayoutEditor(layout: TrackerBoardDisplayLayout, options: SchemaFi
         ${layout.sections.map((section, sectionIndex) => renderLayoutSection(section, sectionIndex, layout, options)).join("")}
       </div>
       <div class="scenemap-modal-actions">
-        <button type="button" class="scenemap-pill-action scenemap-danger" data-layout-action="reset-layout">Reset default</button>
         <span class="scenemap-modal-spacer"></span>
         <button type="button" class="scenemap-pill-action" data-layout-action="cancel">Cancel</button>
         <button type="button" class="scenemap-pill-action scenemap-primary" data-layout-action="save-layout">Save</button>
@@ -1971,6 +2023,7 @@ const styles = `
 .scenemap-settings-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px 8px 12px 0; }
 .scenemap-settings-group { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
 .scenemap-settings-group h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.scenemap-settings-save-mode { margin-left: 6px; color: var(--lumiverse-text-muted); font-size: 9px; font-weight: 650; letter-spacing: .04em; }
 .scenemap-settings-shell label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
 .scenemap-auto-row { display: flex; flex-direction: column; gap: 9px; border-top: 1px solid var(--lumiverse-border); border-bottom: 1px solid var(--lumiverse-border); padding: 9px 0; margin: 10px 0; }
 .scenemap-sampler-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -1993,9 +2046,8 @@ const styles = `
 .scenemap-preset-editor textarea[data-preset-editor="prompt"] { min-height: 150px; font-family: inherit; }
 .scenemap-preset-editor textarea:focus { outline: none; border-color: var(--lumiverse-primary, var(--lumiverse-accent)); box-shadow: 0 0 0 1px var(--lumiverse-primary-020, transparent); }
 .scenemap-preset-schema-error { margin-top: -4px; }
-.scenemap-preset-layout-row { display: flex; justify-content: flex-end; }
-.scenemap-settings-save-bar { flex: 0 0 auto; display: flex; justify-content: flex-end; padding-top: 12px; border-top: 1px solid var(--lumiverse-border); }
-.scenemap-settings-save-bar .scenemap-primary { min-width: 130px; }
+.scenemap-preset-layout-row { display: flex; justify-content: flex-end; gap: 8px; }
+.scenemap-preset-layout-row .scenemap-primary { min-width: 112px; }
 .scenemap-settings-shell input:not([type="checkbox"]), .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-name-editor input, .scenemap-schema-editor input:not([type="checkbox"]), .scenemap-schema-editor textarea {
   width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: 6px;
   background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 7px 9px; font: inherit;

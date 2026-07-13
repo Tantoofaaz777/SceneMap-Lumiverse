@@ -187,6 +187,44 @@ function mergeSettings(value) {
     displayLayout: currentValue.displayLayout?.sections?.length ? currentValue.displayLayout : base.displayLayout
   };
 }
+function mergeAutomaticSettingsPatch(currentValue, value) {
+  const current = mergeSettings(currentValue);
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return current;
+  const patch = value;
+  const next = { ...current };
+  if (typeof patch.connectionId === "string")
+    next.connectionId = patch.connectionId;
+  if (typeof patch.autoGenerateAiTrackers === "boolean")
+    next.autoGenerateAiTrackers = patch.autoGenerateAiTrackers;
+  if (typeof patch.autoGenerateInterval === "number" && Number.isFinite(patch.autoGenerateInterval)) {
+    next.autoGenerateInterval = Math.max(1, Math.floor(patch.autoGenerateInterval));
+  }
+  if (typeof patch.maxResponseTokens === "number" && Number.isFinite(patch.maxResponseTokens)) {
+    next.maxResponseTokens = Math.max(0, Math.floor(patch.maxResponseTokens));
+  }
+  if (patch.temperature === null || typeof patch.temperature === "number" && Number.isFinite(patch.temperature)) {
+    next.temperature = patch.temperature;
+  }
+  if (patch.topP === null || typeof patch.topP === "number" && Number.isFinite(patch.topP)) {
+    next.topP = patch.topP;
+  }
+  if (typeof patch.includeLastXMessages === "number" && Number.isFinite(patch.includeLastXMessages)) {
+    next.includeLastXMessages = Math.max(0, Math.floor(patch.includeLastXMessages));
+  }
+  if (typeof patch.showInputBarButton === "boolean")
+    next.showInputBarButton = patch.showInputBarButton;
+  return mergeSettings(next);
+}
+function mergePresetSettings(currentValue, incomingValue) {
+  const current = mergeSettings(currentValue);
+  const incoming = mergeSettings(incomingValue);
+  return mergeSettings({
+    ...current,
+    schemaPreset: incoming.schemaPreset,
+    schemaPresets: incoming.schemaPresets
+  });
+}
 function getPresetPrompt(settings, presetKey = settings.schemaPreset) {
   const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   return typeof preset?.promptJson === "string" ? preset.promptJson : settings.promptJson;
@@ -1832,6 +1870,7 @@ function swipeSnapshotMatches(snapshot, message, swipeId) {
 // src/backend.ts
 var activeGenerations = new GenerationRegistry;
 var statePushQueue = new KeyedAsyncQueue;
+var settingsSaveQueue = new KeyedAsyncQueue;
 var macroLayoutsByChatId = new Map;
 var alternateCharacterFields = ["description", "personality", "scenario"];
 async function loadSettings(userId) {
@@ -1842,6 +1881,14 @@ async function loadSettings(userId) {
 }
 async function saveSettings(settings, userId) {
   await spindle.userStorage.setJson(SETTINGS_PATH, mergeSettings(settings), { indent: 2, userId });
+}
+async function saveAutomaticSettingsPatch(value, userId) {
+  const current = await loadSettings(userId);
+  await saveSettings(mergeAutomaticSettingsPatch(current, value), userId);
+}
+async function savePresetSettings(settings, userId) {
+  const current = await loadSettings(userId);
+  await saveSettings(mergePresetSettings(current, settings), userId);
 }
 function getActiveSwipeId(message) {
   return typeof message?.swipe_id === "number" && Number.isFinite(message.swipe_id) ? message.swipe_id : 0;
@@ -2427,11 +2474,21 @@ spindle.onFrontendMessage(async (payload, userId) => {
         await pushState(userId);
         break;
       case "save_settings":
-        await saveSettings(payload.settings, userId);
+        await settingsSaveQueue.enqueue(userId, () => saveSettings(payload.settings, userId));
         await pushState(userId, {
           settingsSaveRequestId: typeof payload.requestId === "string" ? payload.requestId : ""
         });
         spindle.toast.success("Settings saved.", { title: "SceneMap", userId });
+        break;
+      case "save_preset_settings":
+        await settingsSaveQueue.enqueue(userId, () => savePresetSettings(payload.settings, userId));
+        await pushState(userId, {
+          settingsSaveRequestId: typeof payload.requestId === "string" ? payload.requestId : ""
+        });
+        spindle.toast.success("Preset saved.", { title: "SceneMap", userId });
+        break;
+      case "save_automatic_settings":
+        await settingsSaveQueue.enqueue(userId, () => saveAutomaticSettingsPatch(payload.settings, userId));
         break;
       case "set_chat_preset": {
         const { chat } = await getActiveContext(userId);
