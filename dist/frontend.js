@@ -1866,7 +1866,7 @@ function trackerPanelMarkup() {
         <button class="scenemap-pill-action scenemap-tracker-action scenemap-danger" data-action="delete" ${latest ? "" : "disabled"}>Delete</button>
       </header>
 
-      <p class="scenemap-status ${state.generationActive ? "is-generating" : ""}">${statusMarkup()}</p>
+      <p class="scenemap-status is-${statusTone()}" role="status" aria-live="polite">${statusMarkup()}</p>
 
       <section class="scenemap-card scenemap-board">
         ${latest ? renderTracker(trackerValue, layout) : `<div class="scenemap-empty">Generate a SceneMap for this swipe</div>`}
@@ -2061,10 +2061,10 @@ function destroySelectHandles(handles) {
 function statusText() {
   if (!state.chatId)
     return "Open a chat to start tracking";
-  if (state.generatingMessageId)
+  if (isMappingScene())
     return "Mapping this scene";
   if (state.latest && !state.latest.schemaMatchesCurrent)
-    return "Tracker uses another or unknown schema. Regenerate it.";
+    return "Schema changed — regenerate to update";
   const autoText = autoGenerateStatusText();
   if (autoText)
     return autoText;
@@ -2083,10 +2083,30 @@ function autoGenerateStatusText() {
     return "Auto-generates on next assistant message";
   return `Auto-generates in ${state.autoGenerateMessagesRemaining} assistant messages`;
 }
+function isMappingScene() {
+  return Boolean(state.generationActive || state.generatingMessageId || isGenerationRequestPending);
+}
+function statusTone() {
+  if (!state.chatId)
+    return "neutral";
+  if (isMappingScene())
+    return "generating";
+  if (state.latest && !state.latest.schemaMatchesCurrent)
+    return "warning";
+  if (state.settings.autoGenerateAiTrackers && state.autoGenerateMessagesRemaining != null) {
+    return state.autoGenerateMessagesRemaining <= 0 ? "warning" : "info";
+  }
+  if (!state.latest)
+    return "neutral";
+  if (state.messagesBehind > 0)
+    return "warning";
+  return "success";
+}
 function statusMarkup() {
-  if (!state.generationActive)
-    return escapeHtml(statusText());
-  return `Mapping this scene<span class="scenemap-loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>`;
+  const indicator = `<span class="scenemap-status-indicator" aria-hidden="true"></span>`;
+  if (!isMappingScene())
+    return `${indicator}<span>${escapeHtml(statusText())}</span>`;
+  return `${indicator}<span>Mapping this scene<span class="scenemap-loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></span>`;
 }
 function handleClick(event) {
   const target = event.target;
@@ -3321,8 +3341,13 @@ var styles = `
 .scenemap-header { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; }
 .scenemap-header h2 { margin: 0; font-size: 18px; font-weight: 700; }
 .scenemap-header p { margin: 3px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; }
-.scenemap-status { margin: -4px 0 0; color: var(--lumiverse-text-muted); font-size: 12px; text-align: center; }
-.scenemap-status.is-generating { color: var(--lumiverse-success, var(--lumiverse-accent)); animation: scenemap-status-pulse 1.8s ease-in-out infinite; }
+.scenemap-status { align-self: center; display: inline-flex; align-items: center; gap: 7px; width: fit-content; max-width: 100%; box-sizing: border-box; margin: -2px 0 0; padding: 6px 10px; border: 1px solid var(--lumiverse-secondary-border, var(--lumiverse-border)); border-radius: var(--lumiverse-radius, 8px); background: var(--lumiverse-secondary, rgba(128, 128, 128, .15)); color: var(--lumiverse-text-muted); font-size: calc(11px * var(--lumiverse-font-scale, 1)); line-height: 1.35; text-align: left; }
+.scenemap-status > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.scenemap-status-indicator { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 14%, transparent); }
+.scenemap-status.is-info, .scenemap-status.is-generating { color: var(--lumiverse-primary-text, var(--lumiverse-primary)); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary)); background: var(--lumiverse-primary-010, color-mix(in srgb, var(--lumiverse-primary) 10%, transparent)); }
+.scenemap-status.is-warning { color: var(--lumiverse-warning, #f59e0b); border-color: var(--lumiverse-warning-050, color-mix(in srgb, var(--lumiverse-warning) 50%, transparent)); background: var(--lumiverse-warning-015, color-mix(in srgb, var(--lumiverse-warning) 15%, transparent)); }
+.scenemap-status.is-success { color: var(--lumiverse-success, #22c55e); border-color: var(--lumiverse-success-050, color-mix(in srgb, var(--lumiverse-success) 50%, transparent)); background: var(--lumiverse-success-015, color-mix(in srgb, var(--lumiverse-success) 15%, transparent)); }
+.scenemap-status.is-generating .scenemap-status-indicator { animation: scenemap-status-pulse 1.2s ease-in-out infinite; }
 .scenemap-loading-dots span { display: inline-block; animation: scenemap-dot-fade 1.2s ease-in-out infinite; }
 .scenemap-loading-dots span:nth-child(2) { animation-delay: .16s; }
 .scenemap-loading-dots span:nth-child(3) { animation-delay: .32s; }
