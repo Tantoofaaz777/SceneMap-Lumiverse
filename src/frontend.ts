@@ -245,6 +245,13 @@ function watchDockResizeHandle() {
     const root = dockRootRef;
     if (!root?.isConnected) return;
 
+    const rootRect = root.getBoundingClientRect();
+    const isSideDock = rootRect.height >= window.innerHeight * 0.6;
+    const fallbackEdge = isSideDock
+      ? (rootRect.left < window.innerWidth - rootRect.right ? "right" : "left")
+      : (rootRect.top < window.innerHeight - rootRect.bottom ? "bottom" : "top");
+    setDockResizeIndicatorEdge(root, fallbackEdge);
+
     for (let ancestor = root.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
       for (const child of ancestor.children) {
         if (!(child instanceof HTMLElement) || child.contains(root)) continue;
@@ -254,6 +261,11 @@ function watchDockResizeHandle() {
         child.classList.add("scenemap-dock-resize-handle");
         child.classList.toggle("scenemap-dock-resize-horizontal", cursor === "ew-resize");
         child.classList.toggle("scenemap-dock-resize-vertical", cursor === "ns-resize");
+        const handleRect = child.getBoundingClientRect();
+        const edge = cursor === "ew-resize"
+          ? (handleRect.left + handleRect.width / 2 < rootRect.left + rootRect.width / 2 ? "left" : "right")
+          : (handleRect.top + handleRect.height / 2 < rootRect.top + rootRect.height / 2 ? "top" : "bottom");
+        setDockResizeIndicatorEdge(root, edge);
         return;
       }
     }
@@ -262,6 +274,16 @@ function watchDockResizeHandle() {
   dockResizeObserver = new MutationObserver(decorate);
   dockResizeObserver.observe(document.documentElement, { childList: true, subtree: true });
   decorate();
+}
+
+function setDockResizeIndicatorEdge(root: HTMLElement, edge: "left" | "right" | "top" | "bottom") {
+  root.classList.remove(
+    "scenemap-dock-resize-edge-left",
+    "scenemap-dock-resize-edge-right",
+    "scenemap-dock-resize-edge-top",
+    "scenemap-dock-resize-edge-bottom",
+  );
+  root.classList.add(`scenemap-dock-resize-edge-${edge}`);
 }
 
 function send(payload: Record<string, unknown>) {
@@ -2060,16 +2082,19 @@ function refreshSvg(): string {
 
 const styles = `
 .scenemap-lv { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; color: var(--lumiverse-text); }
+.scenemap-dock-root { position: relative; }
+.scenemap-dock-root::after { content: ""; position: absolute; z-index: 5; pointer-events: none; border-radius: 999px; background: var(--lumiverse-primary, var(--lumiverse-accent, #8ab4f8)); opacity: .52; transition: opacity .15s ease; }
+.scenemap-dock-resize-edge-left::after, .scenemap-dock-resize-edge-right::after { top: 10px; bottom: 10px; width: 2px; }
+.scenemap-dock-resize-edge-left::after { left: 0; }
+.scenemap-dock-resize-edge-right::after { right: 0; }
+.scenemap-dock-resize-edge-top::after, .scenemap-dock-resize-edge-bottom::after { left: 10px; right: 10px; height: 2px; }
+.scenemap-dock-resize-edge-top::after { top: 0; }
+.scenemap-dock-resize-edge-bottom::after { bottom: 0; }
 .scenemap-dock-resize-handle { background: transparent !important; z-index: 4 !important; }
-.scenemap-dock-resize-handle::after { content: ""; position: absolute; border-radius: 999px; background: var(--lumiverse-border-hover); opacity: .72; transition: opacity .15s ease, background .15s ease, box-shadow .15s ease; }
 .scenemap-dock-resize-horizontal { width: 4px !important; }
-.scenemap-dock-resize-horizontal::after { top: 12px; bottom: 12px; left: 50%; width: 2px; transform: translateX(-50%); }
 .scenemap-dock-resize-vertical { height: 4px !important; }
-.scenemap-dock-resize-vertical::after { left: 12px; right: 12px; top: 50%; height: 2px; transform: translateY(-50%); }
-.scenemap-dock-resize-handle:hover::after { background: var(--lumiverse-primary, var(--lumiverse-accent)); opacity: 1; box-shadow: 0 0 8px color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 55%, transparent); }
 @media (max-width: 600px) {
   .scenemap-dock-resize-horizontal { width: auto !important; height: 4px !important; }
-  .scenemap-dock-resize-horizontal::after { inset: auto 12px 50% 12px; width: auto; height: 2px; transform: translateY(50%); }
 }
 .scenemap-shell { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; padding: 14px; min-height: 0; box-sizing: border-box; overflow: hidden; }
 .scenemap-header { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; }
