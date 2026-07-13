@@ -2045,26 +2045,21 @@ async function resolveTrackerDisplayData(value, context) {
   ]));
   return Object.fromEntries(entries);
 }
-async function buildReferencePromptMessage(chat, userId) {
+async function buildReferencePromptMessages(chat, userId) {
   const context = {
     chatId: chat.id,
     characterId: chat.character_id,
     userId
   };
-  const sections = [
-    await buildCharacterReference(chat, userId),
-    await buildPersonaReference(chat, userId),
-    await buildActiveWorldInfoReference(chat.id, userId)
-  ].filter(Boolean);
-  if (sections.length === 0)
-    return null;
-  const content = sections.join(`
-
-`);
-  return {
+  const sections = (await Promise.all([
+    buildCharacterReference(chat, userId),
+    buildPersonaReference(chat, userId),
+    buildActiveWorldInfoReference(chat.id, userId)
+  ])).filter(Boolean);
+  return Promise.all(sections.map(async (content) => ({
     role: "system",
     content: await resolveDisplayText(content, context)
-  };
+  })));
 }
 async function buildCharacterReference(chat, userId) {
   if (!chat.character_id)
@@ -2074,7 +2069,7 @@ async function buildCharacterReference(chat, userId) {
     if (!character)
       return null;
     const effectiveCharacter = resolveCharacterAlternateFields(character, chat);
-    return taggedReferenceBlock(getEffectiveCharacterName(effectiveCharacter), [
+    return separatedReferenceBlock("{{char}}", [
       compactText(effectiveCharacter.description),
       compactText(effectiveCharacter.personality),
       compactText(effectiveCharacter.scenario)
@@ -2090,7 +2085,7 @@ async function buildPersonaReference(chat, userId) {
     if (!persona)
       return null;
     const resolvedPersona = await resolvePersonaMacro(chat, userId, persona.description);
-    return taggedReferenceBlock(compactText(persona.name) || "Persona", [
+    return separatedReferenceBlock("{{user}}", [
       compactText(resolvedPersona)
     ]);
   } catch (error) {
@@ -2110,16 +2105,11 @@ async function buildActiveWorldInfoReference(chatId, userId) {
     const activeEntries = entries.filter(Boolean);
     if (activeEntries.length === 0)
       return null;
-    return activeEntries.join(`
-
-`);
+    return separatedReferenceBlock("World Info", activeEntries);
   } catch (error) {
     spindle.log.warn(`SceneMap could not read active world info context: ${error.message}`);
     return null;
   }
-}
-function getEffectiveCharacterName(character) {
-  return compactText(character.extensions?.alternate_character_name) || compactText(character.name) || "Character";
 }
 function resolveCharacterAlternateFields(character, chat) {
   const selections = getCharacterAlternateFieldSelections(character, chat);
@@ -2159,22 +2149,17 @@ function getCharacterAlternateFieldSelections(character, chat) {
   }
   return getRecord(metadata.alternate_field_selections);
 }
-function taggedReferenceBlock(name, parts) {
-  const tag = compactTagName(name) || "Reference";
+function separatedReferenceBlock(label, parts) {
   const body = parts.map(compactText).filter(Boolean).join(`
 
 `);
-  return body ? [`<${tag}>`, body, `</${tag}>`].join(`
-`) : null;
-}
-function compactTagName(name) {
-  return compactText(name).replace(/[<>]/g, "").trim();
+  return body ? `>>> ${label} <<<
+${body}` : null;
 }
 function wrapInstructions(text) {
   const body = compactText(text);
-  return body ? `<Instructions>
-${body}
-</Instructions>` : "";
+  return body ? `>>> Instructions <<<
+${body}` : "";
 }
 function getRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -2331,9 +2316,8 @@ ${exampleResponse}
   });
   const context = { chatId: chat.id, characterId: chat.character_id, userId };
   const promptMessages = await resolvePromptMessages(trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages), context);
-  const referenceMessage = await buildReferencePromptMessage(chat, userId);
-  if (referenceMessage)
-    promptMessages.unshift(referenceMessage);
+  const referenceMessages = await buildReferencePromptMessages(chat, userId);
+  promptMessages.unshift(...referenceMessages);
   promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
   const controller = new AbortController;
   const generation = activeGenerations.start(userId, target.id, controller);

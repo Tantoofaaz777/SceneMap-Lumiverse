@@ -273,23 +273,21 @@ async function resolveTrackerDisplayData(value: unknown, context: { chatId: stri
   return Object.fromEntries(entries);
 }
 
-async function buildReferencePromptMessage(chat: ActiveChat, userId: string): Promise<PromptMessage | null> {
+async function buildReferencePromptMessages(chat: ActiveChat, userId: string): Promise<PromptMessage[]> {
   const context: ReferenceContext = {
     chatId: chat.id,
     characterId: chat.character_id,
     userId,
   };
-  const sections = [
-    await buildCharacterReference(chat, userId),
-    await buildPersonaReference(chat, userId),
-    await buildActiveWorldInfoReference(chat.id, userId),
-  ].filter(Boolean) as string[];
-  if (sections.length === 0) return null;
-  const content = sections.join("\n\n");
-  return {
+  const sections = (await Promise.all([
+    buildCharacterReference(chat, userId),
+    buildPersonaReference(chat, userId),
+    buildActiveWorldInfoReference(chat.id, userId),
+  ])).filter(Boolean) as string[];
+  return Promise.all(sections.map(async (content) => ({
     role: "system",
     content: await resolveDisplayText(content, context),
-  };
+  })));
 }
 
 async function buildCharacterReference(chat: ActiveChat, userId: string): Promise<string | null> {
@@ -298,7 +296,7 @@ async function buildCharacterReference(chat: ActiveChat, userId: string): Promis
     const character = await spindle.characters.get(chat.character_id, userId);
     if (!character) return null;
     const effectiveCharacter = resolveCharacterAlternateFields(character, chat);
-    return taggedReferenceBlock(getEffectiveCharacterName(effectiveCharacter), [
+    return separatedReferenceBlock("{{char}}", [
       compactText(effectiveCharacter.description),
       compactText(effectiveCharacter.personality),
       compactText(effectiveCharacter.scenario),
@@ -314,7 +312,7 @@ async function buildPersonaReference(chat: ActiveChat, userId: string): Promise<
     const persona = await spindle.personas.getActive(userId) ?? await spindle.personas.getDefault(userId);
     if (!persona) return null;
     const resolvedPersona = await resolvePersonaMacro(chat, userId, persona.description);
-    return taggedReferenceBlock(compactText(persona.name) || "Persona", [
+    return separatedReferenceBlock("{{user}}", [
       compactText(resolvedPersona),
     ]);
   } catch (error) {
@@ -333,15 +331,11 @@ async function buildActiveWorldInfoReference(chatId: string, userId: string): Pr
     }));
     const activeEntries = entries.filter(Boolean);
     if (activeEntries.length === 0) return null;
-    return activeEntries.join("\n\n");
+    return separatedReferenceBlock("World Info", activeEntries);
   } catch (error) {
     spindle.log.warn(`SceneMap could not read active world info context: ${(error as Error).message}`);
     return null;
   }
-}
-
-function getEffectiveCharacterName(character: { name?: unknown; extensions?: Record<string, unknown> }): string {
-  return compactText(character.extensions?.alternate_character_name) || compactText(character.name) || "Character";
 }
 
 function resolveCharacterAlternateFields(character: CharacterCard, chat: ActiveChat): CharacterCard {
@@ -382,19 +376,14 @@ function getCharacterAlternateFieldSelections(character: CharacterCard, chat: Ac
   return getRecord(metadata.alternate_field_selections);
 }
 
-function taggedReferenceBlock(name: string, parts: string[]): string | null {
-  const tag = compactTagName(name) || "Reference";
+function separatedReferenceBlock(label: string, parts: string[]): string | null {
   const body = parts.map(compactText).filter(Boolean).join("\n\n");
-  return body ? [`<${tag}>`, body, `</${tag}>`].join("\n") : null;
-}
-
-function compactTagName(name: unknown): string {
-  return compactText(name).replace(/[<>]/g, "").trim();
+  return body ? `>>> ${label} <<<\n${body}` : null;
 }
 
 function wrapInstructions(text: string): string {
   const body = compactText(text);
-  return body ? `<Instructions>\n${body}\n</Instructions>` : "";
+  return body ? `>>> Instructions <<<\n${body}` : "";
 }
 
 function getRecord(value: unknown): Record<string, unknown> | null {
@@ -559,8 +548,8 @@ async function generateTracker(userId?: string, expectedLatestMessageId?: string
   });
   const context = { chatId: chat.id, characterId: chat.character_id, userId };
   const promptMessages = await resolvePromptMessages(trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages), context);
-  const referenceMessage = await buildReferencePromptMessage(chat, userId);
-  if (referenceMessage) promptMessages.unshift(referenceMessage);
+  const referenceMessages = await buildReferencePromptMessages(chat, userId);
+  promptMessages.unshift(...referenceMessages);
   promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
 
   const controller = new AbortController();
