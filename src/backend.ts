@@ -115,6 +115,13 @@ function getActiveGenerationMessageId(userId: string): string | null {
   return activeGenerations.getMessageId(userId);
 }
 
+function throwIfGenerationCancelled(signal: AbortSignal): void {
+  if (!signal.aborted) return;
+  const error = new Error("SceneMap generation was cancelled.");
+  error.name = "AbortError";
+  throw error;
+}
+
 function getTrackerStore(message: ChatMessage | null | undefined): Record<string, unknown> | null {
   const data = message?.metadata?.[MESSAGE_METADATA_KEY];
   if (!data || typeof data !== "object") return null;
@@ -475,6 +482,7 @@ async function buildState(userId: string): Promise<SceneMapState> {
     autoGenerateMessagesRemaining: getAutoGenerateMessagesRemaining(settings, messages, latest, activeMessage),
     activeMessageId: activeMessage?.id ?? null,
     activeSwipeId: activeMessage ? getActiveSwipeId(activeMessage) : null,
+    generationActive: activeGenerations.get(userId) !== null,
     generatingMessageId: getActiveGenerationMessageId(userId),
     connections: await listConnections(userId),
   };
@@ -533,57 +541,66 @@ function removeLegacyExampleSection(template: string): string {
 
 async function generateTracker(userId?: string, expectedLatestMessageId?: string) {
   if (!userId) throw new Error("SceneMap needs a user context before generating a tracker.");
-  const activeMessageId = getActiveGenerationMessageId(userId);
-  if (activeMessageId) {
-    const activeGeneration = activeGenerations.get(userId, activeMessageId);
-    if (activeGeneration) activeGenerations.cancel(activeGeneration);
-    spindle.toast.info("SceneMap generation cancelled.", { userId });
-    return;
-  }
-
-  const { chat, messages } = await getActiveContext(userId);
-  if (!chat) throw new Error("Open a chat before generating a SceneMap tracker.");
-
-  const target = findLatestAssistantMessage(messages);
-  if (!target) throw new Error("No assistant message found for SceneMap.");
-  if (expectedLatestMessageId && target.id !== expectedLatestMessageId) {
+  const activeGeneration = activeGenerations.get(userId);
+  if (activeGeneration) {
+    if (expectedLatestMessageId) {
+      await pushState(userId);
+      return;
+    }
+    activeGenerations.cancel(activeGeneration);
     await pushState(userId);
+    spindle.toast.info("SceneMap generation cancellation requested.", { userId });
     return;
   }
-  const targetSwipeId = getActiveSwipeId(target);
-  const targetSwipeSnapshot = captureSwipeSnapshot(target, targetSwipeId);
-  if (!targetSwipeSnapshot) throw new Error("SceneMap could not read the target swipe.");
-
-  const settings = await loadSettings(userId);
-  const presetKey = getChatPresetKey(chat, settings);
-  const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
-  const previousTracker = getTrackerBeforeTargetJson(messages, target.id);
-  const schemaExample = createValidatedSchemaExample(preset.value);
-  const exampleResponse = schemaExample === null ? "" : JSON.stringify(schemaExample, null, 2);
-  const exampleSection = schemaExample === null
-    ? ""
-    : `EXAMPLE OF A PERFECT RESPONSE:\n\`\`\`json\n${exampleResponse}\n\`\`\``;
-  const rawPromptTemplate = getPresetPrompt(settings, presetKey);
-  const promptTemplate = schemaExample === null ? removeLegacyExampleSection(rawPromptTemplate) : rawPromptTemplate;
-  const finalPrompt = renderPrompt(promptTemplate, {
-    schema: JSON.stringify(preset.value, null, 2),
-    previous_tracker: previousTracker,
-    example_response: exampleResponse,
-    example_section: exampleSection,
-  });
-  const characterId = resolveMessageCharacterId(chat, target);
-  const context = { chatId: chat.id, characterId, userId };
-  const promptMessages = await resolvePromptMessages(trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages), context);
-  const referenceMessages = await buildReferencePromptMessages(chat, userId, characterId);
-  promptMessages.unshift(...referenceMessages);
-  promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
 
   const controller = new AbortController();
-  const generation = activeGenerations.start(userId, target.id, controller);
-  await pushState(userId);
-  spindle.toast.info("Mapping this scene...", { title: "SceneMap", userId });
-
+  const generation = activeGenerations.start(userId, controller);
   try {
+    await pushState(userId);
+    throwIfGenerationCancelled(controller.signal);
+
+    const { chat, messages } = await getActiveContext(userId);
+    throwIfGenerationCancelled(controller.signal);
+    if (!chat) throw new Error("Open a chat before generating a SceneMap tracker.");
+
+    const target = findLatestAssistantMessage(messages);
+    if (!target) throw new Error("No assistant message found for SceneMap.");
+    if (expectedLatestMessageId && target.id !== expectedLatestMessageId) return;
+    activeGenerations.setMessageId(generation, target.id);
+    const targetSwipeId = getActiveSwipeId(target);
+    const targetSwipeSnapshot = captureSwipeSnapshot(target, targetSwipeId);
+    if (!targetSwipeSnapshot) throw new Error("SceneMap could not read the target swipe.");
+
+    const settings = await loadSettings(userId);
+    throwIfGenerationCancelled(controller.signal);
+    const presetKey = getChatPresetKey(chat, settings);
+    const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+    const previousTracker = getTrackerBeforeTargetJson(messages, target.id);
+    const schemaExample = createValidatedSchemaExample(preset.value);
+    const exampleResponse = schemaExample === null ? "" : JSON.stringify(schemaExample, null, 2);
+    const exampleSection = schemaExample === null
+      ? ""
+      : `EXAMPLE OF A PERFECT RESPONSE:\n\`\`\`json\n${exampleResponse}\n\`\`\``;
+    const rawPromptTemplate = getPresetPrompt(settings, presetKey);
+    const promptTemplate = schemaExample === null ? removeLegacyExampleSection(rawPromptTemplate) : rawPromptTemplate;
+    const finalPrompt = renderPrompt(promptTemplate, {
+      schema: JSON.stringify(preset.value, null, 2),
+      previous_tracker: previousTracker,
+      example_response: exampleResponse,
+      example_section: exampleSection,
+    });
+    const characterId = resolveMessageCharacterId(chat, target);
+    const context = { chatId: chat.id, characterId, userId };
+    const promptMessages = await resolvePromptMessages(trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages), context);
+    throwIfGenerationCancelled(controller.signal);
+    const referenceMessages = await buildReferencePromptMessages(chat, userId, characterId);
+    throwIfGenerationCancelled(controller.signal);
+    promptMessages.unshift(...referenceMessages);
+    promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
+
+    await pushState(userId);
+    spindle.toast.info("Mapping this scene...", { title: "SceneMap", userId });
+
     const result = await (spindle.generate.quiet as any)({
       messages: promptMessages,
       connection_id: settings.connectionId || undefined,

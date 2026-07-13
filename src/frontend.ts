@@ -38,6 +38,7 @@ let state: SceneMapState = {
   autoGenerateMessagesRemaining: null,
   activeMessageId: null,
   activeSwipeId: null,
+  generationActive: false,
   generatingMessageId: null,
   connections: [],
 };
@@ -496,7 +497,7 @@ function renderChatToolbar() {
     toolbarRootRef.innerHTML = "";
     return;
   }
-  const isGenerating = Boolean(state.generatingMessageId || isGenerationRequestPending);
+  const isGenerating = Boolean(state.generationActive || isGenerationRequestPending);
   const label = isGenerating ? "Cancel SceneMap generation" : state.latest ? "Regenerate SceneMap" : "Generate SceneMap";
   const isBehind = !state.latest || state.messagesBehind > 0;
   toolbarRootRef.innerHTML = `
@@ -522,7 +523,7 @@ function renderDockPanel() {
     <div class="scenemap-shell">
       <header class="scenemap-header">
         <button class="scenemap-pill-action scenemap-primary" data-action="generate" ${state.activeMessageId && !isGenerationRequestPending ? "" : "disabled"}>
-          ${state.generatingMessageId || isGenerationRequestPending ? "Cancel" : latest ? "Regenerate" : "Generate"}
+          ${state.generationActive || isGenerationRequestPending ? "Cancel" : latest ? "Regenerate" : "Generate"}
         </button>
         <button class="scenemap-pill-action" data-action="edit" ${latest ? "" : "disabled"}>Edit</button>
         <button class="scenemap-pill-action scenemap-danger" data-action="delete" ${latest ? "" : "disabled"}>Delete</button>
@@ -530,7 +531,7 @@ function renderDockPanel() {
         <button class="scenemap-pill-action scenemap-pill-icon ${settingsDraft.dirty ? "has-unsaved-settings" : ""}" data-action="open-settings" title="Settings" aria-label="Open SceneMap settings">${settingsSvg}</button>
       </header>
 
-      <p class="scenemap-status ${state.generatingMessageId ? "is-generating" : ""}">${statusMarkup()}</p>
+      <p class="scenemap-status ${state.generationActive ? "is-generating" : ""}">${statusMarkup()}</p>
 
       <section class="scenemap-card scenemap-board">
         ${latest ? renderTracker(latest.displayData ?? latest.data, layout) : `<div class="scenemap-empty">Generate a SceneMap for this swipe</div>`}
@@ -740,7 +741,7 @@ function autoGenerateStatusText(): string | null {
 }
 
 function statusMarkup(): string {
-  if (!state.generatingMessageId) return escapeHtml(statusText());
+  if (!state.generationActive) return escapeHtml(statusText());
   return `Mapping this scene<span class="scenemap-loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>`;
 }
 

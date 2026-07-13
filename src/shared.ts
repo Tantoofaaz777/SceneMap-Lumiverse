@@ -62,6 +62,7 @@ export interface SceneMapState {
   autoGenerateMessagesRemaining: number | null;
   activeMessageId: string | null;
   activeSwipeId: number | null;
+  generationActive: boolean;
   generatingMessageId: string | null;
   connections: Array<{ id: string; name: string; provider: string; model: string; is_default?: boolean }>;
 }
