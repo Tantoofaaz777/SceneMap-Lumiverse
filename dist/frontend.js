@@ -720,7 +720,7 @@ function renderDrawerSettings() {
       ${dockPanelError ? `<div class="scenemap-runtime-error">${escapeHtml(dockPanelError)}</div>` : ""}
       <section class="scenemap-settings-scroll">
         <div class="scenemap-settings-group">
-          <h3>Generation <span class="scenemap-settings-save-mode">Auto-save</span></h3>
+          <h3>Generation</h3>
       <label>
         <span>Connection</span>
         <div class="scenemap-native-select" data-native-setting="connectionId"></div>
@@ -756,7 +756,7 @@ function renderDrawerSettings() {
       </label>
         </div>
         <div class="scenemap-settings-group">
-          <h3>Interface <span class="scenemap-settings-save-mode">Auto-save</span></h3>
+          <h3>Interface</h3>
           <label class="scenemap-switch-row">
             <span>Show input bar button</span>
             <input type="checkbox" data-setting="showInputBarButton" ${settings.showInputBarButton ? "checked" : ""}>
@@ -2119,7 +2119,6 @@ var styles = `
 .scenemap-settings-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px 8px 12px 0; }
 .scenemap-settings-group { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
 .scenemap-settings-group h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-.scenemap-settings-save-mode { margin-left: 6px; color: var(--lumiverse-text-muted); font-size: 9px; font-weight: 650; letter-spacing: .04em; }
 .scenemap-settings-shell label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
 .scenemap-auto-row { display: flex; flex-direction: column; gap: 9px; border-top: 1px solid var(--lumiverse-border); border-bottom: 1px solid var(--lumiverse-border); padding: 9px 0; margin: 10px 0; }
 .scenemap-sampler-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
