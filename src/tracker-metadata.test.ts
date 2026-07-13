@@ -19,14 +19,20 @@ describe("mergeTrackerMetadata", () => {
       metadata,
       { location: "Generated room" },
       0,
+      { presetKey: "default", schemaHash: "hash-1" },
       "2026-07-11T12:00:00.000Z",
     );
 
     expect(result.otherExtension).toEqual({ updatedWhileGenerating: true });
     expect(result[MESSAGE_METADATA_KEY]).toEqual({
-      version: 2,
+      version: 3,
       swipes: {
-        0: { value: { location: "Generated room" }, updatedAt: "2026-07-11T12:00:00.000Z" },
+        0: {
+          value: { location: "Generated room" },
+          updatedAt: "2026-07-11T12:00:00.000Z",
+          presetKey: "default",
+          schemaHash: "hash-1",
+        },
         2: { value: { location: "Current swipe" }, updatedAt: "later" },
       },
       updatedAt: "2026-07-11T12:00:00.000Z",
@@ -40,10 +46,10 @@ describe("mergeTrackerMetadata", () => {
         swipeId: 1,
         updatedAt: "legacy-date",
       },
-    }, { location: "New" }, 2, "new-date");
+    }, { location: "New" }, 2, undefined, "new-date");
 
     expect(result[MESSAGE_METADATA_KEY]).toEqual({
-      version: 2,
+      version: 3,
       swipes: {
         1: { value: { location: "Legacy" }, updatedAt: "legacy-date" },
         2: { value: { location: "New" }, updatedAt: "new-date" },

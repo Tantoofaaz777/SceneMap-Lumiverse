@@ -237,6 +237,24 @@ function resolveSamplingParameter(value, minimum, maximum, fallback = 1) {
   const resolved = typeof value === "number" && Number.isFinite(value) ? value : fallback;
   return Math.min(maximum, Math.max(minimum, resolved));
 }
+function schemaFingerprint(schema) {
+  const text = stableJsonStringify(schema);
+  let hash = 2166136261;
+  for (let index = 0;index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+function stableJsonStringify(value) {
+  if (Array.isArray(value))
+    return `[${value.map(stableJsonStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value).filter(([, child]) => child !== undefined).sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${stableJsonStringify(child)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
 function schemaToExample(schema, rootSchema = schema, seenRefs = new Set) {
   if (!schema || typeof schema !== "object")
     return null;
@@ -1800,7 +1818,7 @@ class GenerationRegistry {
 }
 
 // src/tracker-metadata.ts
-function mergeTrackerMetadata(metadata, data, swipeId, now = new Date().toISOString()) {
+function mergeTrackerMetadata(metadata, data, swipeId, provenance, now = new Date().toISOString()) {
   const existing = getTrackerStore(metadata);
   const swipes = existing?.swipes && typeof existing.swipes === "object" && !Array.isArray(existing.swipes) ? { ...existing.swipes } : {};
   if (existing && "value" in existing) {
@@ -1810,11 +1828,15 @@ function mergeTrackerMetadata(metadata, data, swipeId, now = new Date().toISOStr
       updatedAt: typeof existing.updatedAt === "string" ? existing.updatedAt : now
     };
   }
-  swipes[String(swipeId)] = { value: data, updatedAt: now };
+  swipes[String(swipeId)] = {
+    value: data,
+    updatedAt: now,
+    ...provenance ?? {}
+  };
   return {
     ...metadata ?? {},
     [MESSAGE_METADATA_KEY]: {
-      version: 2,
+      version: 3,
       swipes,
       updatedAt: now
     }
@@ -1938,18 +1960,30 @@ function getTrackerFromStore(store, swipeId) {
   if (swipes && typeof swipes === "object" && !Array.isArray(swipes)) {
     const item = swipes[String(swipeId)];
     if (item && typeof item === "object" && !Array.isArray(item)) {
-      return item.value ?? null;
+      const record = item;
+      if (!("value" in record))
+        return null;
+      return {
+        value: record.value,
+        presetKey: typeof record.presetKey === "string" ? record.presetKey : null,
+        schemaHash: typeof record.schemaHash === "string" ? record.schemaHash : null
+      };
     }
   }
   if ("value" in store) {
     const legacySwipeId = store.swipeId;
-    if (typeof legacySwipeId !== "number" || legacySwipeId === swipeId)
-      return store.value ?? null;
+    if (typeof legacySwipeId !== "number" || legacySwipeId === swipeId) {
+      return {
+        value: store.value,
+        presetKey: typeof store.presetKey === "string" ? store.presetKey : null,
+        schemaHash: typeof store.schemaHash === "string" ? store.schemaHash : null
+      };
+    }
   }
   return null;
 }
 function getMessageTracker(message) {
-  return getTrackerFromStore(getTrackerStore2(message), getActiveSwipeId(message));
+  return getTrackerFromStore(getTrackerStore2(message), getActiveSwipeId(message))?.value ?? null;
 }
 function withoutTrackerMetadata(message) {
   const next = { ...message.metadata ?? {} };
@@ -1968,7 +2002,7 @@ function withoutTrackerMetadata(message) {
     delete next[MESSAGE_METADATA_KEY];
   } else {
     next[MESSAGE_METADATA_KEY] = {
-      version: 2,
+      version: 3,
       swipes,
       updatedAt: new Date().toISOString()
     };
@@ -1979,9 +2013,17 @@ function getLatestTrackerEntry(messages) {
   for (let i = messages.length - 1;i >= 0; i -= 1) {
     if (messages[i].role !== "assistant")
       continue;
-    const data = getMessageTracker(messages[i]);
-    if (data)
-      return { messageId: messages[i].id, swipeId: getActiveSwipeId(messages[i]), data };
+    const stored = getTrackerFromStore(getTrackerStore2(messages[i]), getActiveSwipeId(messages[i]));
+    if (stored?.value) {
+      return {
+        messageId: messages[i].id,
+        swipeId: getActiveSwipeId(messages[i]),
+        data: stored.value,
+        presetKey: stored.presetKey,
+        schemaHash: stored.schemaHash,
+        schemaMatchesCurrent: false
+      };
+    }
   }
   return null;
 }
@@ -2012,16 +2054,16 @@ function getAutoGenerateMessagesRemaining(settings, messages, latest, activeMess
   const messagesDue = latest ? countAssistantMessagesAfter(messages, latest.messageId) : countAssistantMessagesBetween(messages, null, activeMessage.id);
   return Math.max(0, interval - messagesDue);
 }
-function getTrackerBeforeTargetJson(messages, targetId) {
+function getTrackerBeforeTargetJson(messages, targetId, schemaHash) {
   const targetIndex = messages.findIndex((message) => message.id === targetId);
   if (targetIndex <= 0)
     return "{}";
   for (let i = targetIndex - 1;i >= 0; i -= 1) {
     const message = messages[i];
-    const tracker = getMessageTracker(message);
-    if (!tracker)
+    const tracker = getTrackerFromStore(getTrackerStore2(message), getActiveSwipeId(message));
+    if (!tracker || tracker.schemaHash !== schemaHash)
       continue;
-    return JSON.stringify(tracker, null, 2);
+    return JSON.stringify(tracker.value, null, 2);
   }
   return "{}";
 }
@@ -2237,6 +2279,10 @@ async function buildState(userId) {
   const { chat, messages } = await getActiveContext(userId);
   const effectivePresetKey = getChatPresetKey(chat, settings);
   const latest = getLatestTrackerEntry(messages);
+  const effectivePreset = settings.schemaPresets[effectivePresetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  const effectiveSchemaHash = schemaFingerprint(effectivePreset.value);
+  if (latest)
+    latest.schemaMatchesCurrent = latest.schemaHash === effectiveSchemaHash;
   const activeMessage = findLatestAssistantMessage(messages);
   if (latest && chat) {
     const trackerMessage = messages.find((message) => message.id === latest.messageId);
@@ -2264,7 +2310,11 @@ function pushState(userId, response = {}) {
   return statePushQueue.enqueue(userId, async () => {
     const state = await buildState(userId);
     if (state.chatId) {
-      macroLayoutsByChatId.set(state.chatId, getPresetLayout(state.settings, state.effectivePresetKey));
+      const preset = state.settings.schemaPresets[state.effectivePresetKey] ?? state.settings.schemaPresets[state.settings.schemaPreset] ?? state.settings.schemaPresets.default;
+      macroLayoutsByChatId.set(state.chatId, {
+        layout: getPresetLayout(state.settings, state.effectivePresetKey),
+        schemaHash: schemaFingerprint(preset.value)
+      });
     }
     spindle.sendToFrontend({ type: "state", state, ...response }, userId);
   });
@@ -2278,7 +2328,9 @@ async function resolveSceneMapMacro(context) {
     const latest = getLatestTrackerEntry(messages);
     if (!latest)
       return "";
-    return trackerToText(latest.data, macroLayoutsByChatId.get(chatId));
+    const cached = macroLayoutsByChatId.get(chatId);
+    const layout = cached && latest.schemaHash === cached.schemaHash ? cached.layout : undefined;
+    return trackerToText(latest.data, layout);
   } catch (error) {
     spindle.log.warn(`SceneMap macro resolution failed: ${error.message}`);
     return "";
@@ -2344,7 +2396,8 @@ async function generateTracker(userId, expectedLatestMessageId) {
     const presetKey = getChatPresetKey(chat, settings);
     const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
     validateSchemaDefinition(preset.value);
-    const previousTracker = getTrackerBeforeTargetJson(messages, target.id);
+    const currentSchemaHash = schemaFingerprint(preset.value);
+    const previousTracker = getTrackerBeforeTargetJson(messages, target.id, currentSchemaHash);
     const schemaExample = createValidatedSchemaExample(preset.value);
     const exampleResponse = schemaExample === null ? "" : JSON.stringify(schemaExample, null, 2);
     const exampleSection = schemaExample === null ? "" : `EXAMPLE OF A PERFECT RESPONSE:
@@ -2389,7 +2442,10 @@ ${exampleResponse}
       throw new Error("SceneMap target swipe changed during generation. Generate the tracker again.");
     }
     await spindle.chat.updateMessage(chat.id, target.id, {
-      metadata: mergeTrackerMetadata(currentTarget.metadata, parsed, targetSwipeId)
+      metadata: mergeTrackerMetadata(currentTarget.metadata, parsed, targetSwipeId, {
+        presetKey,
+        schemaHash: currentSchemaHash
+      })
     });
     spindle.toast.success("Tracker updated.", { title: "SceneMap", userId });
   } catch (error) {
@@ -2450,9 +2506,17 @@ async function editTracker(chatId, messageId, swipeId, data, userId) {
   const settings = await loadSettings(userId);
   const presetKey = getChatPresetKey(chat, settings);
   const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+  const currentSchemaHash = schemaFingerprint(preset.value);
+  const storedTracker = getTrackerFromStore(getTrackerStore2(message), swipeId);
+  if (!storedTracker || storedTracker.schemaHash !== currentSchemaHash) {
+    throw new Error("This tracker was generated with another or unknown schema. Regenerate it before editing.");
+  }
   const validatedData = validateTrackerData(data, preset.value);
   await spindle.chat.updateMessage(chatId, messageId, {
-    metadata: mergeTrackerMetadata(message.metadata, validatedData, swipeId)
+    metadata: mergeTrackerMetadata(message.metadata, validatedData, swipeId, {
+      presetKey,
+      schemaHash: currentSchemaHash
+    })
   });
   spindle.toast.success("Tracker saved.", { title: "SceneMap", userId });
   await pushState(userId);

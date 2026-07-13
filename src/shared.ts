@@ -51,6 +51,9 @@ export interface TrackerEntry {
   swipeId: number;
   data: unknown;
   displayData?: unknown;
+  presetKey: string | null;
+  schemaHash: string | null;
+  schemaMatchesCurrent: boolean;
 }
 
 export interface SceneMapState {
@@ -329,6 +332,27 @@ export function jsonValuesEqual(left: unknown, right: unknown): boolean {
   return leftKeys.length === rightKeys.length
     && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(rightRecord, key)
       && jsonValuesEqual(leftRecord[key], rightRecord[key]));
+}
+
+export function schemaFingerprint(schema: Record<string, unknown>): string {
+  const text = stableJsonStringify(schema);
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJsonStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, child]) => child !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${stableJsonStringify(child)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 export function schemaToExample(schema: any, rootSchema = schema, seenRefs = new Set<string>()): unknown {

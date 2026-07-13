@@ -6,6 +6,7 @@ import {
   mergePresetSettings,
   mergeSettings,
   resolveSamplingParameter,
+  schemaFingerprint,
   schemaToExample,
   trackerToText,
 } from "./shared";
@@ -100,6 +101,18 @@ describe("validateSchemaDefinition", () => {
         },
       },
     })).not.toThrow();
+  });
+});
+
+describe("schemaFingerprint", () => {
+  test("is stable across object key order", () => {
+    expect(schemaFingerprint({ type: "object", title: "Tracker" })).toBe(
+      schemaFingerprint({ title: "Tracker", type: "object" }),
+    );
+  });
+
+  test("changes when the schema changes", () => {
+    expect(schemaFingerprint({ type: "object" })).not.toBe(schemaFingerprint({ type: "string" }));
   });
 });
 

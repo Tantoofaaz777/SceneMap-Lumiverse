@@ -1,9 +1,15 @@
 import { MESSAGE_METADATA_KEY } from "./shared";
 
+export type TrackerProvenance = {
+  presetKey: string;
+  schemaHash: string;
+};
+
 export function mergeTrackerMetadata(
   metadata: Record<string, unknown> | undefined,
   data: unknown,
   swipeId: number,
+  provenance?: TrackerProvenance,
   now = new Date().toISOString(),
 ): Record<string, unknown> {
   const existing = getTrackerStore(metadata);
@@ -17,11 +23,15 @@ export function mergeTrackerMetadata(
       updatedAt: typeof existing.updatedAt === "string" ? existing.updatedAt : now,
     };
   }
-  swipes[String(swipeId)] = { value: data, updatedAt: now };
+  swipes[String(swipeId)] = {
+    value: data,
+    updatedAt: now,
+    ...(provenance ?? {}),
+  };
   return {
     ...(metadata ?? {}),
     [MESSAGE_METADATA_KEY]: {
-      version: 2,
+      version: 3,
       swipes,
       updatedAt: now,
     },

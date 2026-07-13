@@ -526,15 +526,18 @@ function renderChatToolbar() {
 function renderDockPanel() {
   if (!dockRootRef) return;
   const settings = mergeSettings(state.settings);
-  const layout = getPresetLayout(settings, state.effectivePresetKey);
   const latest = state.latest;
+  const trackerValue = latest?.displayData ?? latest?.data;
+  const layout = latest && !latest.schemaMatchesCurrent
+    ? createTrackerDataLayout(trackerValue)
+    : getPresetLayout(settings, state.effectivePresetKey);
   dockRootRef.innerHTML = `
     <div class="scenemap-shell">
       <header class="scenemap-header">
         <button class="scenemap-pill-action scenemap-primary" data-action="generate" ${state.activeMessageId && !isGenerationRequestPending ? "" : "disabled"}>
           ${state.generationActive || isGenerationRequestPending ? "Cancel" : latest ? "Regenerate" : "Generate"}
         </button>
-        <button class="scenemap-pill-action" data-action="edit" ${latest ? "" : "disabled"}>Edit</button>
+        <button class="scenemap-pill-action" data-action="edit" ${latest?.schemaMatchesCurrent ? "" : "disabled"}>Edit</button>
         <button class="scenemap-pill-action scenemap-danger" data-action="delete" ${latest ? "" : "disabled"}>Delete</button>
         <button class="scenemap-pill-action scenemap-pill-icon ${isRefreshingState ? "is-refreshing" : ""}" data-action="refresh" title="Refresh">${refreshSvg()}</button>
         <button class="scenemap-pill-action scenemap-pill-icon ${settingsDraft.dirty ? "has-unsaved-settings" : ""}" data-action="open-settings" title="Settings" aria-label="Open SceneMap settings">${settingsSvg}</button>
@@ -543,7 +546,7 @@ function renderDockPanel() {
       <p class="scenemap-status ${state.generationActive ? "is-generating" : ""}">${statusMarkup()}</p>
 
       <section class="scenemap-card scenemap-board">
-        ${latest ? renderTracker(latest.displayData ?? latest.data, layout) : `<div class="scenemap-empty">Generate a SceneMap for this swipe</div>`}
+        ${latest ? renderTracker(trackerValue, layout) : `<div class="scenemap-empty">Generate a SceneMap for this swipe</div>`}
       </section>
     </div>
   `;
@@ -736,6 +739,7 @@ function destroySelectHandles(handles: SpindleSelectHandle[]) {
 function statusText(): string {
   if (!state.chatId) return "Open a chat to start tracking";
   if (state.generatingMessageId) return "Mapping this scene";
+  if (state.latest && !state.latest.schemaMatchesCurrent) return "Tracker uses another or unknown schema. Regenerate it.";
   const autoText = autoGenerateStatusText();
   if (autoText) return autoText;
   if (!state.latest) return "This scene is unmapped";
@@ -773,7 +777,7 @@ function handleClick(event: Event) {
     renderChatToolbar();
     send({ type: "generate_tracker" });
   }
-  if (action === "edit" && state.latest && state.chatId) {
+  if (action === "edit" && state.latest?.schemaMatchesCurrent && state.chatId) {
     const { messageId, swipeId, data: trackerData } = state.latest;
     const chatId = state.chatId;
     openJsonEditor("Edit Tracker JSON", trackerData, (data) => {
@@ -2171,6 +2175,40 @@ function renderTracker(value: unknown, layout: TrackerBoardDisplayLayout): strin
     .filter(Boolean)
     .join("");
   return html || `<div class="scenemap-empty">Tracker data is empty.</div>`;
+}
+
+function createTrackerDataLayout(value: unknown): TrackerBoardDisplayLayout {
+  const record = getRecord(value);
+  return {
+    sections: [{
+      title: "Tracker",
+      fields: Object.entries(record).map(([key, child]) => {
+        if (Array.isArray(child) && child.some((item) => item && typeof item === "object" && !Array.isArray(item))) {
+          const childKeys = new Set<string>();
+          for (const item of child) {
+            for (const childKey of Object.keys(getRecord(item))) {
+              if (childKey !== "name") childKeys.add(childKey);
+            }
+          }
+          return {
+            path: key,
+            label: humanizeTrackerKey(key),
+            display: "character_cards",
+            fields: Array.from(childKeys).map((childKey) => ({
+              path: childKey,
+              label: humanizeTrackerKey(childKey),
+              display: defaultDisplayForSchema({}, childKey),
+            })),
+          };
+        }
+        return {
+          path: key,
+          label: humanizeTrackerKey(key),
+          display: Array.isArray(child) ? "chips" : defaultDisplayForSchema({}, key),
+        };
+      }),
+    }],
+  };
 }
 
 function renderField(field: TrackerBoardField, tracker: unknown): string {
