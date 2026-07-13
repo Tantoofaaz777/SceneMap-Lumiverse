@@ -323,6 +323,17 @@ function applyDockPanelSize(root: HTMLElement, edge: "left" | "right" | "top" | 
   if (!host) return;
   if (edge === "left" || edge === "right") host.style.width = `${size}px`;
   else host.style.height = `${size}px`;
+
+  const appRoot = root.closest<HTMLElement>("[data-app-root]");
+  if (!appRoot) return;
+  const insetProperty = edge === "right"
+    ? "--spindle-dock-left"
+    : edge === "left"
+      ? "--spindle-dock-right"
+      : edge === "bottom"
+        ? "--spindle-dock-top"
+        : "--spindle-dock-bottom";
+  appRoot.style.setProperty(insetProperty, `${size}px`);
 }
 
 function addDockResizeListeners(root: HTMLElement) {
