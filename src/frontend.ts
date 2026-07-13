@@ -59,6 +59,7 @@ let automaticSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let drawerScrollRestoreFrame: number | null = null;
 let drawerView: "tracker" | "settings" = "settings";
 let appliedTrackerPlacement: SceneMapSettings["trackerPlacement"] | null = null;
+let hasReceivedInitialState = false;
 
 type AutomaticallySavedSetting =
   | "connectionId"
@@ -92,6 +93,7 @@ const automaticSettingsDraft = new AutomaticSettingsDraftTracker<SceneMapSetting
 const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
 
 export function setup(ctx: SpindleFrontendContext) {
+  hasReceivedInitialState = false;
   settingsDraft.reset();
   automaticSettingsDraft.reset();
   presetEditorDrafts.clear();
@@ -135,6 +137,7 @@ export function setup(ctx: SpindleFrontendContext) {
       const previousState = state;
       isGenerationRequestPending = false;
       const incomingState = payload.state as SceneMapState;
+      hasReceivedInitialState = true;
       if (!settingsDraft.initialized) settingsDraft.initialize(presetSettingsFingerprint(incomingState.settings));
       if (typeof payload.automaticSettingsSaveRequestId === "string") {
         automaticSettingsDraft.acknowledge(payload.automaticSettingsSaveRequestId);
@@ -227,6 +230,7 @@ export function setup(ctx: SpindleFrontendContext) {
     toolbarRootRef = null;
     tabHandle = null;
     appliedTrackerPlacement = null;
+    hasReceivedInitialState = false;
     drawerView = "settings";
     isGenerationRequestPending = false;
     settingsRuntimeError = null;
@@ -285,6 +289,10 @@ function destroyDockPanel() {
 }
 
 function syncTrackerPlacement() {
+  if (!hasReceivedInitialState) {
+    destroyDockPanel();
+    return;
+  }
   const placement = mergeSettings(state.settings).trackerPlacement;
   if (placement !== appliedTrackerPlacement) {
     drawerView = placement === "drawer" ? "tracker" : "settings";
@@ -443,6 +451,10 @@ function renderTrackerSurfaces() {
 
 function renderChatToolbar() {
   if (!toolbarRootRef) return;
+  if (!hasReceivedInitialState) {
+    toolbarRootRef.innerHTML = "";
+    return;
+  }
   if (!state.settings.showInputBarButton) {
     toolbarRootRef.innerHTML = "";
     return;
@@ -471,6 +483,12 @@ function renderDockPanel() {
 
 function renderDrawerContent() {
   if (!rootRef) return;
+  if (!hasReceivedInitialState) {
+    destroySelectHandles(drawerSelectHandles);
+    drawerSelectHandles = [];
+    rootRef.innerHTML = "";
+    return;
+  }
   if (drawerScrollRestoreFrame !== null) cancelAnimationFrame(drawerScrollRestoreFrame);
   drawerScrollRestoreFrame = null;
   if (mergeSettings(state.settings).trackerPlacement === "drawer" && drawerView === "tracker") {

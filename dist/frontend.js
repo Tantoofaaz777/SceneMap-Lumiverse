@@ -3731,12 +3731,14 @@ var automaticSaveTimer = null;
 var drawerScrollRestoreFrame = null;
 var drawerView = "settings";
 var appliedTrackerPlacement = null;
+var hasReceivedInitialState = false;
 var presetEditorDrafts = new Map;
 var pendingTextEditors = new Map;
 var settingsDraft = new SettingsDraftTracker;
 var automaticSettingsDraft = new AutomaticSettingsDraftTracker;
 var iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
 function setup(ctx) {
+  hasReceivedInitialState = false;
   settingsDraft.reset();
   automaticSettingsDraft.reset();
   presetEditorDrafts.clear();
@@ -3781,6 +3783,7 @@ function setup(ctx) {
       const previousState = state;
       isGenerationRequestPending = false;
       const incomingState = payload.state;
+      hasReceivedInitialState = true;
       if (!settingsDraft.initialized)
         settingsDraft.initialize(presetSettingsFingerprint(incomingState.settings));
       if (typeof payload.automaticSettingsSaveRequestId === "string") {
@@ -3875,6 +3878,7 @@ function setup(ctx) {
     toolbarRootRef = null;
     tabHandle = null;
     appliedTrackerPlacement = null;
+    hasReceivedInitialState = false;
     drawerView = "settings";
     isGenerationRequestPending = false;
     settingsRuntimeError = null;
@@ -3932,6 +3936,10 @@ function destroyDockPanel() {
   dockPanelError = null;
 }
 function syncTrackerPlacement() {
+  if (!hasReceivedInitialState) {
+    destroyDockPanel();
+    return;
+  }
   const placement = mergeSettings(state.settings).trackerPlacement;
   if (placement !== appliedTrackerPlacement) {
     drawerView = placement === "drawer" ? "tracker" : "settings";
@@ -4077,6 +4085,10 @@ function renderTrackerSurfaces() {
 function renderChatToolbar() {
   if (!toolbarRootRef)
     return;
+  if (!hasReceivedInitialState) {
+    toolbarRootRef.innerHTML = "";
+    return;
+  }
   if (!state.settings.showInputBarButton) {
     toolbarRootRef.innerHTML = "";
     return;
@@ -4105,6 +4117,12 @@ function renderDockPanel() {
 function renderDrawerContent() {
   if (!rootRef)
     return;
+  if (!hasReceivedInitialState) {
+    destroySelectHandles(drawerSelectHandles);
+    drawerSelectHandles = [];
+    rootRef.innerHTML = "";
+    return;
+  }
   if (drawerScrollRestoreFrame !== null)
     cancelAnimationFrame(drawerScrollRestoreFrame);
   drawerScrollRestoreFrame = null;
