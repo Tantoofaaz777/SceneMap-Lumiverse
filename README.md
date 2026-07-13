@@ -6,7 +6,8 @@ SceneMap is a Lumiverse Spindle extension that tracks roleplay scene state as st
 
 - Generate a scene tracker for the latest assistant message.
 - Store tracker data per message swipe in message metadata.
-- Display the current tracker in a Lumiverse drawer tab.
+- Display the current tracker in a resizable Lumiverse dock panel beside the chat.
+- Keep SceneMap settings in a dedicated drawer tab that can reopen the dock panel.
 - Edit, delete, and regenerate tracker JSON.
 - Configure connection, sampling, context window, and interface options with auto-save from the SceneMap sidebar.
 - Save preset schema, prompt, and visual layout together with an explicit preset action.

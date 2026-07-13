@@ -44,9 +44,12 @@ let state: SceneMapState = {
 
 let ctxRef: SpindleFrontendContext | null = null;
 let rootRef: HTMLElement | null = null;
+let dockRootRef: HTMLElement | null = null;
 let toolbarRootRef: Element | null = null;
 let tabHandle: ReturnType<SpindleFrontendContext["ui"]["registerDrawerTab"]> | null = null;
-let drawerView: "tracker" | "settings" = "tracker";
+let dockPanelHandle: ReturnType<SpindleFrontendContext["ui"]["requestDockPanel"]> | null = null;
+let dockPanelCreatedAt = 0;
+let dockPanelError: string | null = null;
 let isRefreshingState = false;
 let isGenerationRequestPending = false;
 let editorRequestSeq = 0;
@@ -84,7 +87,6 @@ const settingsDraft = new SettingsDraftTracker();
 
 const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
 const settingsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`;
-const backSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>`;
 
 export function setup(ctx: SpindleFrontendContext) {
   settingsDraft.reset();
@@ -95,16 +97,21 @@ export function setup(ctx: SpindleFrontendContext) {
   const removeStyle = ctx.dom.addStyle(styles);
   const tab = ctx.ui.registerDrawerTab({
     id: "scenemap",
-    title: "SceneMap",
+    title: "SceneMap Settings",
     shortName: "Map",
-    headerTitle: "SceneMap",
-    description: "Track the current scene as structured JSON",
-    keywords: ["tracker", "scene", "map", "json"],
+    headerTitle: "SceneMap Settings",
+    description: "Configure the SceneMap dock panel",
+    keywords: ["tracker", "scene", "map", "json", "settings"],
     iconSvg,
   });
   tabHandle = tab;
   rootRef = tab.root;
   rootRef.classList.add("scenemap-lv");
+  ensureDockPanel();
+  const offTabActivate = tab.onActivate(() => {
+    ensureDockPanel();
+    renderDrawerSettings();
+  });
   const toolbarRoot = ctx.ui.mount("chat_toolbar");
   toolbarRootRef = toolbarRoot;
   toolbarRoot.classList.add("scenemap-chat-toolbar-root");
@@ -129,10 +136,15 @@ export function setup(ctx: SpindleFrontendContext) {
       isRefreshingState = false;
       isGenerationRequestPending = false;
       const saveFailed = typeof payload.requestId === "string" && settingsDraft.fail(payload.requestId);
-      if (saveFailed) drawerView = "settings";
-      renderDrawer();
+      renderDrawerSettings();
+      renderDockPanel();
       renderChatToolbar();
-      showInlineError(payload.message);
+      if (saveFailed) {
+        tabHandle?.activate();
+        showSettingsError(payload.message);
+      } else {
+        showInlineError(payload.message);
+      }
     }
     if (payload?.type === "text_editor_result") {
       handleTextEditorResult(payload);
@@ -164,24 +176,62 @@ export function setup(ctx: SpindleFrontendContext) {
     rootRef?.removeEventListener("click", handleClick);
     rootRef?.removeEventListener("change", handleChange);
     rootRef?.removeEventListener("input", handleInput);
+    dockRootRef?.removeEventListener("click", handleClick);
     toolbarRoot.removeEventListener("click", handleClick);
     offBackend();
     for (const off of offEvents) off();
+    offTabActivate();
     destroySelectHandles(drawerSelectHandles);
     drawerSelectHandles = [];
     tab.destroy();
+    dockPanelHandle?.destroy();
     removeStyle();
     ctx.dom.cleanup();
     ctxRef = null;
     rootRef = null;
+    dockRootRef = null;
     toolbarRootRef = null;
     tabHandle = null;
-    drawerView = "tracker";
+    dockPanelHandle = null;
+    dockPanelCreatedAt = 0;
+    dockPanelError = null;
     isGenerationRequestPending = false;
     settingsDraft.reset();
     presetEditorDrafts.clear();
     pendingAutomaticSettings = {};
   };
+}
+
+function ensureDockPanel() {
+  const ctx = ctxRef;
+  if (!ctx) return;
+  if (dockRootRef && dockPanelHandle && (dockRootRef.isConnected || Date.now() - dockPanelCreatedAt < 1000)) return;
+  dockRootRef?.removeEventListener("click", handleClick);
+  dockPanelHandle?.destroy();
+  let panel: ReturnType<SpindleFrontendContext["ui"]["requestDockPanel"]>;
+  try {
+    panel = ctx.ui.requestDockPanel({
+      edge: "right",
+      title: "SceneMap",
+      size: 380,
+      minSize: 300,
+      maxSize: 620,
+      resizable: true,
+      startCollapsed: false,
+    });
+  } catch (error) {
+    dockPanelHandle = null;
+    dockRootRef = null;
+    dockPanelError = `Could not open the SceneMap panel: ${(error as Error).message}`;
+    return;
+  }
+  dockPanelHandle = panel;
+  dockPanelCreatedAt = Date.now();
+  dockPanelError = null;
+  dockRootRef = panel.root;
+  dockRootRef.classList.add("scenemap-lv", "scenemap-dock-root");
+  dockRootRef.addEventListener("click", handleClick);
+  renderDockPanel();
 }
 
 function send(payload: Record<string, unknown>) {
@@ -191,13 +241,14 @@ function send(payload: Record<string, unknown>) {
 function requestState(showRefresh = false) {
   if (showRefresh) {
     isRefreshingState = true;
-    renderDrawer();
+    renderDockPanel();
   }
   send({ type: "get_state" });
 }
 
 function render() {
-  renderDrawer();
+  renderDockPanel();
+  renderDrawerSettings();
   renderChatToolbar();
   tabHandle?.setBadge(state.messagesBehind > 0 ? String(state.messagesBehind) : null);
 }
@@ -225,18 +276,12 @@ function renderChatToolbar() {
   `;
 }
 
-function renderDrawer() {
-  if (!rootRef) return;
-  destroySelectHandles(drawerSelectHandles);
-  drawerSelectHandles = [];
-  if (drawerView === "settings") {
-    renderDrawerSettings();
-    return;
-  }
+function renderDockPanel() {
+  if (!dockRootRef) return;
   const settings = mergeSettings(state.settings);
   const layout = getPresetLayout(settings, state.effectivePresetKey);
   const latest = state.latest;
-  rootRef.innerHTML = `
+  dockRootRef.innerHTML = `
     <div class="scenemap-shell">
       <header class="scenemap-header">
         <button class="scenemap-pill-action scenemap-primary" data-action="generate" ${state.activeMessageId && !isGenerationRequestPending ? "" : "disabled"}>
@@ -259,6 +304,8 @@ function renderDrawer() {
 
 function renderDrawerSettings() {
   if (!rootRef) return;
+  destroySelectHandles(drawerSelectHandles);
+  drawerSelectHandles = [];
   const settings = mergeSettings(state.settings);
   const presetKeys = Object.keys(settings.schemaPresets);
   const canDeletePreset = settings.schemaPreset !== "default" && presetKeys.length > 1;
@@ -267,12 +314,13 @@ function renderDrawerSettings() {
   rootRef.innerHTML = `
     <div class="scenemap-shell scenemap-settings-shell">
       <header class="scenemap-settings-heading">
-        <button class="scenemap-pill-action scenemap-pill-icon" data-action="close-settings" title="Back to SceneMap" aria-label="Back to SceneMap">${backSvg}</button>
         <div>
           <h2>Settings</h2>
           <p data-settings-dirty ${settingsDraft.dirty ? "" : "hidden"}>Unsaved preset changes</p>
         </div>
+        <button class="scenemap-pill-action scenemap-settings-open-panel" data-action="open-dock">Open panel</button>
       </header>
+      ${dockPanelError ? `<div class="scenemap-runtime-error">${escapeHtml(dockPanelError)}</div>` : ""}
       <section class="scenemap-settings-scroll">
         <div class="scenemap-settings-group">
           <h3>Generation <span class="scenemap-settings-save-mode">Auto-save</span></h3>
@@ -471,18 +519,25 @@ function handleClick(event: Event) {
   if (!button) return;
   const action = button.dataset.action;
   if (action === "open-settings") {
-    drawerView = "settings";
-    renderDrawer();
+    tabHandle?.activate();
+    renderDrawerSettings();
   }
-  if (action === "close-settings") {
-    drawerView = "tracker";
-    renderDrawer();
+  if (action === "open-dock") {
+    ensureDockPanel();
+    if (dockPanelError) {
+      renderDrawerSettings();
+      return;
+    }
+    dockPanelHandle?.expand();
+    renderDockPanel();
   }
   if (action === "refresh") requestState(true);
   if (action === "generate") {
     if (isGenerationRequestPending) return;
+    ensureDockPanel();
+    dockPanelHandle?.expand();
     isGenerationRequestPending = true;
-    renderDrawer();
+    renderDockPanel();
     renderChatToolbar();
     send({ type: "generate_tracker" });
   }
@@ -505,7 +560,7 @@ function handleClick(event: Event) {
     if (!preparePresetDraftsForSave()) return;
     const requestId = `settings-${Date.now()}-${++settingsSaveRequestSeq}`;
     if (!settingsDraft.beginSave(requestId)) return;
-    renderDrawer();
+    renderDrawerSettings();
     send({ type: "save_preset_settings", requestId, settings: state.settings });
   }
 }
@@ -519,6 +574,7 @@ function updateSettingsDraft(settings: SceneMapSettings) {
 function revealUnsavedSettings() {
   const indicator = rootRef?.querySelector<HTMLElement>("[data-settings-dirty]");
   if (indicator) indicator.hidden = false;
+  dockRootRef?.querySelector<HTMLElement>("[data-action=\"open-settings\"]")?.classList.add("has-unsaved-settings");
 }
 
 function getPresetEditorDraft(settings: SceneMapSettings, key: string): PresetEditorDraft {
@@ -628,7 +684,7 @@ function preparePresetDraftsForSave(): boolean {
     } catch {
       settings.schemaPreset = key;
       state = { ...state, settings };
-      renderDrawer();
+      renderDrawerSettings();
       return false;
     }
   }
@@ -1808,19 +1864,23 @@ function handleTextEditorResult(payload: any) {
 }
 
 function showInlineError(message: string) {
-  if (!rootRef) return;
-  const existing = rootRef.querySelector(".scenemap-runtime-error");
+  prependRuntimeError(dockRootRef, message);
+}
+
+function prependRuntimeError(root: HTMLElement | null, message: string) {
+  if (!root) return;
+  const existing = root.querySelector(".scenemap-runtime-error");
   existing?.remove();
   const node = document.createElement("div");
   node.className = "scenemap-runtime-error";
   node.textContent = message;
-  rootRef.prepend(node);
+  root.prepend(node);
 }
 
 function showSettingsError(message: string) {
-  drawerView = "settings";
-  renderDrawer();
-  showInlineError(message);
+  tabHandle?.activate();
+  renderDrawerSettings();
+  prependRuntimeError(rootRef, message);
 }
 
 function renderTracker(value: unknown, layout: TrackerBoardDisplayLayout): string {
@@ -2020,6 +2080,7 @@ const styles = `
 .scenemap-settings-heading { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; padding-bottom: 12px; border-bottom: 1px solid var(--lumiverse-border); }
 .scenemap-settings-heading h2 { margin: 0; font-size: 17px; font-weight: 800; }
 .scenemap-settings-heading p { margin: 2px 0 0; color: var(--lumiverse-warning, var(--lumiverse-accent)); font-size: 11px; }
+.scenemap-settings-open-panel { margin-left: auto; white-space: nowrap; }
 .scenemap-settings-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px 8px 12px 0; }
 .scenemap-settings-group { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
 .scenemap-settings-group h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
