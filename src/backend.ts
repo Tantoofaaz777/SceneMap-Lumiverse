@@ -746,6 +746,9 @@ spindle.onFrontendMessage(async (payload: any, userId?: string) => {
         break;
       case "save_automatic_settings":
         await settingsSaveQueue.enqueue(userId, () => saveAutomaticSettingsPatch(payload.settings, userId));
+        await pushState(userId, {
+          automaticSettingsSaveRequestId: typeof payload.requestId === "string" ? payload.requestId : "",
+        });
         break;
       case "set_chat_preset": {
         const { chat } = await getActiveContext(userId);

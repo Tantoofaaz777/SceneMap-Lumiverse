@@ -17,6 +17,7 @@ import {
   type TrackerFieldDisplay,
 } from "./shared";
 import { SettingsDraftTracker } from "./settings-draft";
+import { AutomaticSettingsDraftTracker } from "./automatic-settings-draft";
 import {
   createVisualSchemaField,
   createVisualSchemaModel,
@@ -69,9 +70,9 @@ let isRefreshingState = false;
 let isGenerationRequestPending = false;
 let editorRequestSeq = 0;
 let settingsSaveRequestSeq = 0;
+let automaticSaveRequestSeq = 0;
 let drawerSelectHandles: SpindleSelectHandle[] = [];
 let automaticSaveTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingAutomaticSettings: Partial<SceneMapSettings> = {};
 
 type AutomaticallySavedSetting =
   | "connectionId"
@@ -99,13 +100,14 @@ type PendingTextEditor = {
 
 const pendingTextEditors = new Map<string, PendingTextEditor>();
 const settingsDraft = new SettingsDraftTracker();
+const automaticSettingsDraft = new AutomaticSettingsDraftTracker<SceneMapSettings>();
 
 const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
 const settingsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`;
 
 export function setup(ctx: SpindleFrontendContext) {
   settingsDraft.reset();
-  pendingAutomaticSettings = {};
+  automaticSettingsDraft.reset();
   if (automaticSaveTimer) clearTimeout(automaticSaveTimer);
   automaticSaveTimer = null;
   dockPanelSize = readStoredDockPanelSize();
@@ -138,13 +140,18 @@ export function setup(ctx: SpindleFrontendContext) {
       isRefreshingState = false;
       isGenerationRequestPending = false;
       const incomingState = payload.state as SceneMapState;
+      if (typeof payload.automaticSettingsSaveRequestId === "string") {
+        automaticSettingsDraft.acknowledge(payload.automaticSettingsSaveRequestId);
+      }
       if (typeof payload.settingsSaveRequestId === "string") {
         const acknowledged = settingsDraft.acknowledge(payload.settingsSaveRequestId);
         if (acknowledged && !settingsDraft.dirty) presetEditorDrafts.clear();
       }
-      state = settingsDraft.dirty
-        ? { ...incomingState, settings: state.settings }
-        : incomingState;
+      const baseSettings = settingsDraft.dirty ? state.settings : incomingState.settings;
+      state = {
+        ...incomingState,
+        settings: automaticSettingsDraft.overlay(baseSettings),
+      };
       render();
       return;
     }
@@ -152,10 +159,11 @@ export function setup(ctx: SpindleFrontendContext) {
       isRefreshingState = false;
       isGenerationRequestPending = false;
       const saveFailed = typeof payload.requestId === "string" && settingsDraft.fail(payload.requestId);
+      const automaticSaveFailed = typeof payload.requestId === "string" && automaticSettingsDraft.fail(payload.requestId);
       renderDrawerSettings();
       renderDockPanel();
       renderChatToolbar();
-      if (saveFailed) {
+      if (saveFailed || automaticSaveFailed) {
         tabHandle?.activate();
         showSettingsError(payload.message);
       } else {
@@ -218,7 +226,7 @@ export function setup(ctx: SpindleFrontendContext) {
     isGenerationRequestPending = false;
     settingsDraft.reset();
     presetEditorDrafts.clear();
-    pendingAutomaticSettings = {};
+    automaticSettingsDraft.reset();
   };
 }
 
@@ -701,7 +709,7 @@ function updateNativeSetting(key: "connectionId" | "includeLastXMessages" | "sch
 }
 
 function queueAutomaticSettingsSave(settings: SceneMapSettings, key: AutomaticallySavedSetting, immediate: boolean) {
-  (pendingAutomaticSettings as Record<string, unknown>)[key] = settings[key];
+  automaticSettingsDraft.queue(key, settings[key]);
   if (automaticSaveTimer) clearTimeout(automaticSaveTimer);
   automaticSaveTimer = null;
   if (immediate) {
@@ -714,10 +722,10 @@ function queueAutomaticSettingsSave(settings: SceneMapSettings, key: Automatical
 function flushAutomaticSettingsSave() {
   if (automaticSaveTimer) clearTimeout(automaticSaveTimer);
   automaticSaveTimer = null;
-  if (Object.keys(pendingAutomaticSettings).length === 0) return;
-  const settings = pendingAutomaticSettings;
-  pendingAutomaticSettings = {};
-  send({ type: "save_automatic_settings", settings });
+  const requestId = `automatic-settings-${Date.now()}-${++automaticSaveRequestSeq}`;
+  const settings = automaticSettingsDraft.begin(requestId);
+  if (!settings) return;
+  send({ type: "save_automatic_settings", requestId, settings });
 }
 
 function destroySelectHandles(handles: SpindleSelectHandle[]) {
