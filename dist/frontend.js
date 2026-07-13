@@ -1514,7 +1514,7 @@ function setup(ctx) {
   });
   tabHandle = tab;
   rootRef = tab.root;
-  rootRef.classList.add("scenemap-lv");
+  rootRef.classList.add("scenemap-lv", "scenemap-drawer-root");
   syncTrackerPlacement();
   const offTabActivate = tab.onActivate(() => {
     syncTrackerPlacement();
@@ -3330,6 +3330,7 @@ function refreshSvg() {
 }
 var styles = `
 .scenemap-lv { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; color: var(--lumiverse-text); }
+.scenemap-drawer-root { height: auto; min-height: 100%; overflow: visible; }
 .scenemap-dock-resize-handle { background: var(--lumiverse-primary, var(--lumiverse-accent, #8ab4f8)) !important; opacity: .45; z-index: 4 !important; transition: opacity .15s ease; }
 .scenemap-dock-resize-handle:hover { opacity: .9; }
 .scenemap-dock-resize-horizontal { width: 6px !important; }
@@ -3388,11 +3389,13 @@ var styles = `
 .scenemap-character-grid { display: flex; flex-direction: column; gap: 14px; }
 .scenemap-character { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: var(--lumiverse-radius, 8px); padding: 10px; }
 .scenemap-character h4 { margin: 0 0 10px; color: color-mix(in srgb, var(--lumiverse-text) 72%, var(--lumiverse-primary, var(--lumiverse-accent)) 28%); font-size: 14px; font-weight: 760; }
-.scenemap-drawer-scroll { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; box-sizing: border-box; padding: 14px; }
+.scenemap-drawer-scroll { flex: 0 0 auto; min-height: 0; overflow: visible; box-sizing: border-box; padding: 14px; }
 .scenemap-drawer-view { min-height: 0; }
 .scenemap-drawer-view > .scenemap-shell { flex: none; min-height: 0; overflow: visible; padding: 14px 0 0; }
 .scenemap-drawer-view .scenemap-board, .scenemap-drawer-view .scenemap-settings-scroll { flex: none; overflow: visible; }
 .scenemap-drawer-view .scenemap-settings-scroll { padding-right: 0; padding-bottom: 0; }
+.scenemap-drawer-root > .scenemap-settings-shell { flex: none; overflow: visible; }
+.scenemap-drawer-root > .scenemap-settings-shell .scenemap-settings-scroll { flex: none; overflow: visible; }
 .scenemap-view-tabs { display: flex; gap: 2px; width: min(100%, 380px); box-sizing: border-box; margin: 0 auto; padding: 3px; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius-md, 10px); background: var(--lumiverse-fill-subtle); }
 .scenemap-lv .scenemap-view-tabs button { flex: 1 1 0; min-width: 0; padding: 7px 10px; border: 1px solid transparent; border-radius: var(--lumiverse-radius, 8px); background: transparent; color: var(--lumiverse-text-dim); font-size: calc(12px * var(--lumiverse-font-scale, 1)); font-weight: 500; text-align: center; transition: color var(--lumiverse-transition-fast, .15s ease), border-color var(--lumiverse-transition-fast, .15s ease); }
 .scenemap-lv .scenemap-view-tabs button:hover:not(:disabled):not(.is-active) { color: var(--lumiverse-text-muted); background: var(--lumiverse-fill-subtle); border-color: transparent; }
