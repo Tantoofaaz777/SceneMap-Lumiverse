@@ -98,6 +98,7 @@ const settingsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="
 export function setup(ctx: SpindleFrontendContext) {
   settingsDraft.reset();
   automaticSettingsDraft.reset();
+  pendingTextEditors.clear();
   if (automaticSaveTimer) clearTimeout(automaticSaveTimer);
   automaticSaveTimer = null;
   dockPanelSize = readStoredDockPanelSize();
@@ -150,11 +151,16 @@ export function setup(ctx: SpindleFrontendContext) {
       isGenerationRequestPending = false;
       const saveFailed = typeof payload.requestId === "string" && settingsDraft.fail(payload.requestId);
       const automaticSaveFailed = typeof payload.requestId === "string" && automaticSettingsDraft.fail(payload.requestId);
+      const editorFailed = typeof payload.requestId === "string"
+        ? takePendingTextEditor(payload.requestId)
+        : null;
       renderDrawerSettings();
       renderDockPanel();
       renderChatToolbar();
       if (saveFailed || automaticSaveFailed) {
         tabHandle?.activate();
+        showSettingsError(payload.message);
+      } else if (editorFailed?.errorTarget === "settings") {
         showSettingsError(payload.message);
       } else {
         showInlineError(payload.message);
@@ -216,6 +222,7 @@ export function setup(ctx: SpindleFrontendContext) {
     settingsDraft.reset();
     presetEditorDrafts.clear();
     automaticSettingsDraft.reset();
+    pendingTextEditors.clear();
   };
 }
 
@@ -1980,6 +1987,12 @@ function openJsonEditor(title: string, value: unknown, onSave: (data: unknown) =
 }
 
 function openTextEditor(title: string, value: string, onSave: (value: string) => void) {
+  if (Array.from(pendingTextEditors.values()).some((pending) => pending.title === title)) {
+    const message = `${title} is already open.`;
+    if (title.includes("Tracker")) showInlineError(message);
+    else showSettingsError(message);
+    return;
+  }
   const requestId = `editor-${Date.now()}-${++editorRequestSeq}`;
   pendingTextEditors.set(requestId, {
     title,
@@ -1997,9 +2010,8 @@ function openTextEditor(title: string, value: string, onSave: (value: string) =>
 
 function handleTextEditorResult(payload: any) {
   const requestId = typeof payload.requestId === "string" ? payload.requestId : "";
-  const pending = pendingTextEditors.get(requestId);
+  const pending = takePendingTextEditor(requestId);
   if (!pending) return;
-  pendingTextEditors.delete(requestId);
   if (payload.cancelled) return;
   const text = typeof payload.text === "string" ? payload.text : "";
   try {
@@ -2013,6 +2025,12 @@ function handleTextEditorResult(payload: any) {
 
 function showInlineError(message: string) {
   prependRuntimeError(dockRootRef, message);
+}
+
+function takePendingTextEditor(requestId: string): PendingTextEditor | null {
+  const pending = pendingTextEditors.get(requestId) ?? null;
+  if (pending) pendingTextEditors.delete(requestId);
+  return pending;
 }
 
 function prependRuntimeError(root: HTMLElement | null, message: string) {

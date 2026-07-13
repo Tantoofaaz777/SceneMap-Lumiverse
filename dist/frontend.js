@@ -1497,6 +1497,7 @@ var settingsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18
 function setup(ctx) {
   settingsDraft.reset();
   automaticSettingsDraft.reset();
+  pendingTextEditors.clear();
   if (automaticSaveTimer)
     clearTimeout(automaticSaveTimer);
   automaticSaveTimer = null;
@@ -1550,11 +1551,14 @@ function setup(ctx) {
       isGenerationRequestPending = false;
       const saveFailed = typeof payload.requestId === "string" && settingsDraft.fail(payload.requestId);
       const automaticSaveFailed = typeof payload.requestId === "string" && automaticSettingsDraft.fail(payload.requestId);
+      const editorFailed = typeof payload.requestId === "string" ? takePendingTextEditor(payload.requestId) : null;
       renderDrawerSettings();
       renderDockPanel();
       renderChatToolbar();
       if (saveFailed || automaticSaveFailed) {
         tabHandle?.activate();
+        showSettingsError(payload.message);
+      } else if (editorFailed?.errorTarget === "settings") {
         showSettingsError(payload.message);
       } else {
         showInlineError(payload.message);
@@ -1615,6 +1619,7 @@ function setup(ctx) {
     settingsDraft.reset();
     presetEditorDrafts.clear();
     automaticSettingsDraft.reset();
+    pendingTextEditors.clear();
   };
 }
 function ensureDockPanel() {
@@ -2994,6 +2999,14 @@ function openJsonEditor(title, value, onSave) {
   });
 }
 function openTextEditor(title, value, onSave) {
+  if (Array.from(pendingTextEditors.values()).some((pending) => pending.title === title)) {
+    const message = `${title} is already open.`;
+    if (title.includes("Tracker"))
+      showInlineError(message);
+    else
+      showSettingsError(message);
+    return;
+  }
   const requestId = `editor-${Date.now()}-${++editorRequestSeq}`;
   pendingTextEditors.set(requestId, {
     title,
@@ -3010,10 +3023,9 @@ function openTextEditor(title, value, onSave) {
 }
 function handleTextEditorResult(payload) {
   const requestId = typeof payload.requestId === "string" ? payload.requestId : "";
-  const pending = pendingTextEditors.get(requestId);
+  const pending = takePendingTextEditor(requestId);
   if (!pending)
     return;
-  pendingTextEditors.delete(requestId);
   if (payload.cancelled)
     return;
   const text = typeof payload.text === "string" ? payload.text : "";
@@ -3029,6 +3041,12 @@ function handleTextEditorResult(payload) {
 }
 function showInlineError(message) {
   prependRuntimeError(dockRootRef, message);
+}
+function takePendingTextEditor(requestId) {
+  const pending = pendingTextEditors.get(requestId) ?? null;
+  if (pending)
+    pendingTextEditors.delete(requestId);
+  return pending;
 }
 function prependRuntimeError(root, message) {
   if (!root)
