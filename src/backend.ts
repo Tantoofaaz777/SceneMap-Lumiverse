@@ -15,7 +15,12 @@ import {
   type SceneMapState,
   type TrackerEntry,
 } from "./shared";
-import { createValidatedSchemaExample, parseAndValidateModelJson, validateTrackerData } from "./schema-validator";
+import {
+  createValidatedSchemaExample,
+  parseAndValidateModelJson,
+  validateSchemaDefinition,
+  validateTrackerData,
+} from "./schema-validator";
 import { GenerationRegistry } from "./generation-registry";
 import { mergeTrackerMetadata } from "./tracker-metadata";
 import { KeyedAsyncQueue } from "./keyed-async-queue";
@@ -103,6 +108,7 @@ async function saveAutomaticSettingsPatch(value: unknown, userId: string) {
 }
 
 async function savePresetSettings(settings: SceneMapSettings, userId: string) {
+  for (const preset of Object.values(settings.schemaPresets)) validateSchemaDefinition(preset.value);
   const current = await loadSettings(userId);
   await saveSettings(mergePresetSettings(current, settings), userId);
 }
@@ -575,6 +581,7 @@ async function generateTracker(userId?: string, expectedLatestMessageId?: string
     throwIfGenerationCancelled(controller.signal);
     const presetKey = getChatPresetKey(chat, settings);
     const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+    validateSchemaDefinition(preset.value);
     const previousTracker = getTrackerBeforeTargetJson(messages, target.id);
     const schemaExample = createValidatedSchemaExample(preset.value);
     const exampleResponse = schemaExample === null ? "" : JSON.stringify(schemaExample, null, 2);

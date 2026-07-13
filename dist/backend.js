@@ -1630,6 +1630,13 @@ class Validator {
 
 // src/schema-validator.ts
 var validTypes = new Set(["array", "boolean", "integer", "null", "number", "object", "string"]);
+function validateSchemaDefinition(schema) {
+  try {
+    createValidator(schema).validate({});
+  } catch (error) {
+    throw new Error(`SceneMap schema is invalid: ${error.message}`);
+  }
+}
 function createValidatedSchemaExample(schema) {
   const example = schemaToExample(schema);
   try {
@@ -1764,35 +1771,31 @@ function escapeJsonPointerToken(value) {
 // src/generation-registry.ts
 class GenerationRegistry {
   items = new Map;
-  get(userId, messageId) {
-    return this.items.get(this.key(userId, messageId)) ?? null;
+  get(userId) {
+    return this.items.get(userId) ?? null;
   }
   getMessageId(userId) {
-    for (const generation of this.items.values()) {
-      if (generation.userId === userId)
-        return generation.messageId;
-    }
-    return null;
+    return this.get(userId)?.messageId ?? null;
   }
-  start(userId, messageId, controller) {
-    const key = this.key(userId, messageId);
-    if (this.items.has(key))
-      throw new Error("SceneMap generation is already active for this message.");
-    const generation = { key, messageId, userId, controller };
-    this.items.set(key, generation);
+  start(userId, controller) {
+    if (this.items.has(userId))
+      throw new Error("SceneMap generation is already active for this user.");
+    const generation = { messageId: null, userId, controller };
+    this.items.set(userId, generation);
     return generation;
   }
+  setMessageId(generation, messageId) {
+    if (this.items.get(generation.userId) === generation)
+      generation.messageId = messageId;
+  }
   cancel(generation) {
-    if (this.items.get(generation.key) !== generation)
+    if (this.items.get(generation.userId) !== generation)
       return;
     generation.controller.abort();
   }
   finish(generation) {
-    if (this.items.get(generation.key) === generation)
-      this.items.delete(generation.key);
-  }
-  key(userId, messageId) {
-    return `${userId}:${messageId}`;
+    if (this.items.get(generation.userId) === generation)
+      this.items.delete(generation.userId);
   }
 }
 
@@ -1904,6 +1907,8 @@ async function saveAutomaticSettingsPatch(value, userId) {
   await saveSettings(mergeAutomaticSettingsPatch(current, value), userId);
 }
 async function savePresetSettings(settings, userId) {
+  for (const preset of Object.values(settings.schemaPresets))
+    validateSchemaDefinition(preset.value);
   const current = await loadSettings(userId);
   await saveSettings(mergePresetSettings(current, settings), userId);
 }
@@ -1912,6 +1917,13 @@ function getActiveSwipeId(message) {
 }
 function getActiveGenerationMessageId(userId) {
   return activeGenerations.getMessageId(userId);
+}
+function throwIfGenerationCancelled(signal) {
+  if (!signal.aborted)
+    return;
+  const error = new Error("SceneMap generation was cancelled.");
+  error.name = "AbortError";
+  throw error;
 }
 function getTrackerStore2(message) {
   const data = message?.metadata?.[MESSAGE_METADATA_KEY];
@@ -2243,6 +2255,7 @@ async function buildState(userId) {
     autoGenerateMessagesRemaining: getAutoGenerateMessagesRemaining(settings, messages, latest, activeMessage),
     activeMessageId: activeMessage?.id ?? null,
     activeSwipeId: activeMessage ? getActiveSwipeId(activeMessage) : null,
+    generationActive: activeGenerations.get(userId) !== null,
     generatingMessageId: getActiveGenerationMessageId(userId),
     connections: await listConnections(userId)
   };
@@ -2296,57 +2309,66 @@ function removeLegacyExampleSection(template) {
 async function generateTracker(userId, expectedLatestMessageId) {
   if (!userId)
     throw new Error("SceneMap needs a user context before generating a tracker.");
-  const activeMessageId = getActiveGenerationMessageId(userId);
-  if (activeMessageId) {
-    const activeGeneration = activeGenerations.get(userId, activeMessageId);
-    if (activeGeneration)
-      activeGenerations.cancel(activeGeneration);
-    spindle.toast.info("SceneMap generation cancelled.", { userId });
-    return;
-  }
-  const { chat, messages } = await getActiveContext(userId);
-  if (!chat)
-    throw new Error("Open a chat before generating a SceneMap tracker.");
-  const target = findLatestAssistantMessage(messages);
-  if (!target)
-    throw new Error("No assistant message found for SceneMap.");
-  if (expectedLatestMessageId && target.id !== expectedLatestMessageId) {
+  const activeGeneration = activeGenerations.get(userId);
+  if (activeGeneration) {
+    if (expectedLatestMessageId) {
+      await pushState(userId);
+      return;
+    }
+    activeGenerations.cancel(activeGeneration);
     await pushState(userId);
+    spindle.toast.info("SceneMap generation cancellation requested.", { userId });
     return;
   }
-  const targetSwipeId = getActiveSwipeId(target);
-  const targetSwipeSnapshot = captureSwipeSnapshot(target, targetSwipeId);
-  if (!targetSwipeSnapshot)
-    throw new Error("SceneMap could not read the target swipe.");
-  const settings = await loadSettings(userId);
-  const presetKey = getChatPresetKey(chat, settings);
-  const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
-  const previousTracker = getTrackerBeforeTargetJson(messages, target.id);
-  const schemaExample = createValidatedSchemaExample(preset.value);
-  const exampleResponse = schemaExample === null ? "" : JSON.stringify(schemaExample, null, 2);
-  const exampleSection = schemaExample === null ? "" : `EXAMPLE OF A PERFECT RESPONSE:
+  const controller = new AbortController;
+  const generation = activeGenerations.start(userId, controller);
+  try {
+    await pushState(userId);
+    throwIfGenerationCancelled(controller.signal);
+    const { chat, messages } = await getActiveContext(userId);
+    throwIfGenerationCancelled(controller.signal);
+    if (!chat)
+      throw new Error("Open a chat before generating a SceneMap tracker.");
+    const target = findLatestAssistantMessage(messages);
+    if (!target)
+      throw new Error("No assistant message found for SceneMap.");
+    if (expectedLatestMessageId && target.id !== expectedLatestMessageId)
+      return;
+    activeGenerations.setMessageId(generation, target.id);
+    const targetSwipeId = getActiveSwipeId(target);
+    const targetSwipeSnapshot = captureSwipeSnapshot(target, targetSwipeId);
+    if (!targetSwipeSnapshot)
+      throw new Error("SceneMap could not read the target swipe.");
+    const settings = await loadSettings(userId);
+    throwIfGenerationCancelled(controller.signal);
+    const presetKey = getChatPresetKey(chat, settings);
+    const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
+    validateSchemaDefinition(preset.value);
+    const previousTracker = getTrackerBeforeTargetJson(messages, target.id);
+    const schemaExample = createValidatedSchemaExample(preset.value);
+    const exampleResponse = schemaExample === null ? "" : JSON.stringify(schemaExample, null, 2);
+    const exampleSection = schemaExample === null ? "" : `EXAMPLE OF A PERFECT RESPONSE:
 \`\`\`json
 ${exampleResponse}
 \`\`\``;
-  const rawPromptTemplate = getPresetPrompt(settings, presetKey);
-  const promptTemplate = schemaExample === null ? removeLegacyExampleSection(rawPromptTemplate) : rawPromptTemplate;
-  const finalPrompt = renderPrompt(promptTemplate, {
-    schema: JSON.stringify(preset.value, null, 2),
-    previous_tracker: previousTracker,
-    example_response: exampleResponse,
-    example_section: exampleSection
-  });
-  const characterId = resolveMessageCharacterId(chat, target);
-  const context = { chatId: chat.id, characterId, userId };
-  const promptMessages = await resolvePromptMessages(trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages), context);
-  const referenceMessages = await buildReferencePromptMessages(chat, userId, characterId);
-  promptMessages.unshift(...referenceMessages);
-  promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
-  const controller = new AbortController;
-  const generation = activeGenerations.start(userId, target.id, controller);
-  await pushState(userId);
-  spindle.toast.info("Mapping this scene...", { title: "SceneMap", userId });
-  try {
+    const rawPromptTemplate = getPresetPrompt(settings, presetKey);
+    const promptTemplate = schemaExample === null ? removeLegacyExampleSection(rawPromptTemplate) : rawPromptTemplate;
+    const finalPrompt = renderPrompt(promptTemplate, {
+      schema: JSON.stringify(preset.value, null, 2),
+      previous_tracker: previousTracker,
+      example_response: exampleResponse,
+      example_section: exampleSection
+    });
+    const characterId = resolveMessageCharacterId(chat, target);
+    const context = { chatId: chat.id, characterId, userId };
+    const promptMessages = await resolvePromptMessages(trimMessagesForPrompt(messages, target.id, settings.includeLastXMessages), context);
+    throwIfGenerationCancelled(controller.signal);
+    const referenceMessages = await buildReferencePromptMessages(chat, userId, characterId);
+    throwIfGenerationCancelled(controller.signal);
+    promptMessages.unshift(...referenceMessages);
+    promptMessages.push({ role: "user", content: wrapInstructions(finalPrompt) });
+    await pushState(userId);
+    spindle.toast.info("Mapping this scene...", { title: "SceneMap", userId });
     const result = await spindle.generate.quiet({
       messages: promptMessages,
       connection_id: settings.connectionId || undefined,
@@ -2496,6 +2518,9 @@ spindle.onFrontendMessage(async (payload, userId) => {
         break;
       case "save_automatic_settings":
         await settingsSaveQueue.enqueue(userId, () => saveAutomaticSettingsPatch(payload.settings, userId));
+        await pushState(userId, {
+          automaticSettingsSaveRequestId: typeof payload.requestId === "string" ? payload.requestId : ""
+        });
         break;
       case "set_chat_preset": {
         const { chat } = await getActiveContext(userId);

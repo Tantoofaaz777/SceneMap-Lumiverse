@@ -9,7 +9,12 @@ import {
   schemaToExample,
   trackerToText,
 } from "./shared";
-import { createValidatedSchemaExample, parseAndValidateModelJson, validateTrackerData } from "./schema-validator";
+import {
+  createValidatedSchemaExample,
+  parseAndValidateModelJson,
+  validateSchemaDefinition,
+  validateTrackerData,
+} from "./schema-validator";
 
 describe("parseAndValidateModelJson", () => {
   test("accepts a fenced response that matches the configured schema", () => {
@@ -73,6 +78,28 @@ describe("parseAndValidateModelJson", () => {
     expect(parseAndValidateModelJson('{"timestamp":"2026-07-11T12:30:00Z"}', schema)).toEqual({
       timestamp: "2026-07-11T12:30:00Z",
     });
+  });
+});
+
+describe("validateSchemaDefinition", () => {
+  test("rejects invalid schemas before generation", () => {
+    expect(() => validateSchemaDefinition({
+      type: "object",
+      properties: { name: { type: "strnig" } },
+    })).toThrow("#/properties/name/type contains an unsupported JSON Schema type");
+  });
+
+  test("accepts valid recursive schemas", () => {
+    expect(() => validateSchemaDefinition({
+      type: "object",
+      properties: { node: { $ref: "#/$defs/node" } },
+      $defs: {
+        node: {
+          type: "object",
+          properties: { child: { $ref: "#/$defs/node" } },
+        },
+      },
+    })).not.toThrow();
   });
 });
 

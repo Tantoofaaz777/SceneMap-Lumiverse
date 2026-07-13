@@ -18,6 +18,7 @@ import {
 } from "./shared";
 import { SettingsDraftTracker } from "./settings-draft";
 import { AutomaticSettingsDraftTracker } from "./automatic-settings-draft";
+import { validateSchemaDefinition } from "./schema-validator";
 import {
   createVisualSchemaField,
   createVisualSchemaModel,
@@ -831,7 +832,9 @@ function parseSchemaEditorText(text: string): Record<string, unknown> {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("Schema JSON must be an object.");
   }
-  return parsed as Record<string, unknown>;
+  const schema = parsed as Record<string, unknown>;
+  validateSchemaDefinition(schema);
+  return schema;
 }
 
 function updatePresetEditorControl(target: HTMLInputElement | HTMLTextAreaElement) {
@@ -1091,6 +1094,7 @@ function parsePresetImport(value: unknown, filename: string): { name: string; sc
   if (record.type !== "scenemap-preset") throw new Error("This is not a SceneMap preset file.");
   const schema = getRecord(record.schema);
   if (Object.keys(schema).length === 0) throw new Error("Preset file is missing a schema object.");
+  validateSchemaDefinition(schema);
   if (typeof record.prompt !== "string") throw new Error("Preset file is missing a prompt string.");
   const layout = normalizeImportedLayout(record.layout);
   validateLayout(layout);

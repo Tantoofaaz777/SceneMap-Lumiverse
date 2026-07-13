@@ -8,6 +8,14 @@ import { parseModelJson, schemaToExample } from "./shared";
 
 const validTypes = new Set(["array", "boolean", "integer", "null", "number", "object", "string"]);
 
+export function validateSchemaDefinition(schema: Record<string, unknown>): void {
+  try {
+    createValidator(schema).validate({});
+  } catch (error) {
+    throw new Error(`SceneMap schema is invalid: ${(error as Error).message}`);
+  }
+}
+
 export function createValidatedSchemaExample(schema: Record<string, unknown>): unknown | null {
   const example = schemaToExample(schema);
   try {
