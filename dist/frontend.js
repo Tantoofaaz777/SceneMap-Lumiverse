@@ -5830,6 +5830,9 @@ var styles = `
 .scenemap-lv .scenemap-expand-editor-btn { position: absolute; top: 5px; right: 5px; z-index: 1; display: flex; align-items: center; justify-content: center; width: var(--lumiverse-btn-icon-sm, 28px); height: var(--lumiverse-btn-icon-sm, 28px); padding: 0; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius-sm, 5px); background: var(--lumiverse-bg, #0f0d15); color: var(--lumiverse-text-dim); cursor: pointer; opacity: 0; transition: all var(--lumiverse-transition-fast, .15s ease); }
 .scenemap-expandable-textarea:hover .scenemap-expand-editor-btn, .scenemap-expandable-textarea:focus-within .scenemap-expand-editor-btn { opacity: 1; }
 .scenemap-lv .scenemap-expand-editor-btn:hover:not(:disabled) { color: var(--lumiverse-primary); border-color: var(--lumiverse-primary); background: var(--lumiverse-bg, #0f0d15); }
+@media (hover: none), (pointer: coarse) {
+  .scenemap-lv .scenemap-expand-editor-btn { opacity: 1; }
+}
 .scenemap-preset-editor textarea { width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius, 8px); background: var(--lumiverse-secondary, rgba(128, 128, 128, .15)); color: var(--lumiverse-text); padding: 10px 11px; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .scenemap-preset-editor textarea[data-preset-editor="prompt"] { min-height: 150px; font-family: inherit; }
 .scenemap-preset-editor textarea:focus { outline: none; border-color: var(--lumiverse-primary, var(--lumiverse-accent)); box-shadow: 0 0 0 1px var(--lumiverse-primary-020, transparent); }
