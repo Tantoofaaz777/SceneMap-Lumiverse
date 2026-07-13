@@ -1599,6 +1599,7 @@ function mountLayoutSortables(
   redraw: (preserveScroll?: boolean) => void,
 ): Sortable[] {
   const instances: Sortable[] = [];
+  const scrollContainer = root.querySelector<HTMLElement>(".scenemap-layout-sections");
   for (const container of root.querySelectorAll<HTMLElement>("[data-layout-sortable]")) {
     const kind = container.dataset.layoutSortable as LayoutDragKind | undefined;
     if (!kind) continue;
@@ -1621,10 +1622,10 @@ function mountLayoutSortables(
       fallbackTolerance: 4,
       forceFallback: true,
       fallbackOnBody: true,
-      scroll: true,
-      bubbleScroll: true,
-      scrollSensitivity: 48,
-      scrollSpeed: 12,
+      scroll: scrollContainer ?? true,
+      bubbleScroll: false,
+      scrollSensitivity: 24,
+      scrollSpeed: 8,
       ghostClass: "scenemap-layout-drag-ghost",
       chosenClass: "scenemap-layout-drag-chosen",
       dragClass: "scenemap-layout-drag-active",

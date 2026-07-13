@@ -5153,6 +5153,7 @@ function mountLayoutSelects(root, layout, options, redraw) {
 }
 function mountLayoutSortables(root, layout, redraw) {
   const instances = [];
+  const scrollContainer = root.querySelector(".scenemap-layout-sections");
   for (const container of root.querySelectorAll("[data-layout-sortable]")) {
     const kind = container.dataset.layoutSortable;
     if (!kind)
@@ -5172,10 +5173,10 @@ function mountLayoutSortables(root, layout, redraw) {
       fallbackTolerance: 4,
       forceFallback: true,
       fallbackOnBody: true,
-      scroll: true,
-      bubbleScroll: true,
-      scrollSensitivity: 48,
-      scrollSpeed: 12,
+      scroll: scrollContainer ?? true,
+      bubbleScroll: false,
+      scrollSensitivity: 24,
+      scrollSpeed: 8,
       ghostClass: "scenemap-layout-drag-ghost",
       chosenClass: "scenemap-layout-drag-chosen",
       dragClass: "scenemap-layout-drag-active",
