@@ -84,7 +84,6 @@ const settingsDraft = new SettingsDraftTracker();
 const automaticSettingsDraft = new AutomaticSettingsDraftTracker<SceneMapSettings>();
 
 const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>`;
-const settingsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`;
 
 export function setup(ctx: SpindleFrontendContext) {
   settingsDraft.reset();
@@ -97,10 +96,10 @@ export function setup(ctx: SpindleFrontendContext) {
   const removeStyle = ctx.dom.addStyle(styles);
   const tab = ctx.ui.registerDrawerTab({
     id: "scenemap",
-    title: "SceneMap Settings",
+    title: "SceneMap",
     shortName: "Map",
-    headerTitle: "SceneMap Settings",
-    description: "Configure the SceneMap dock panel",
+    headerTitle: "SceneMap",
+    description: "View the SceneMap tracker and settings",
     keywords: ["tracker", "scene", "map", "json", "settings"],
     iconSvg,
   });
@@ -261,7 +260,6 @@ function syncTrackerPlacement() {
     drawerView = placement === "drawer" ? "tracker" : "settings";
     appliedTrackerPlacement = placement;
   }
-  tabHandle?.setTitle(placement === "drawer" ? "SceneMap" : "SceneMap Settings");
   if (placement === "drawer") destroyDockPanel();
   else ensureDockPanel();
 }
@@ -424,10 +422,23 @@ function renderDrawerContent() {
   if (mergeSettings(state.settings).trackerPlacement === "drawer" && drawerView === "tracker") {
     destroySelectHandles(drawerSelectHandles);
     drawerSelectHandles = [];
-    rootRef.innerHTML = trackerPanelMarkup();
+    rootRef.innerHTML = drawerPageMarkup(trackerPanelMarkup());
     return;
   }
   renderDrawerSettings();
+}
+
+function drawerPageMarkup(content: string): string {
+  const trackerActive = drawerView === "tracker";
+  return `
+    <div class="scenemap-drawer-scroll">
+      <nav class="scenemap-view-tabs" role="tablist" aria-label="SceneMap sections">
+        <button type="button" role="tab" data-action="show-tracker" aria-selected="${trackerActive}" class="${trackerActive ? "is-active" : ""}">Tracker</button>
+        <button type="button" role="tab" data-action="show-settings" aria-selected="${!trackerActive}" class="${trackerActive ? "" : "is-active"}">Settings</button>
+      </nav>
+      <div class="scenemap-drawer-view" role="tabpanel">${content}</div>
+    </div>
+  `;
 }
 
 function trackerPanelMarkup(): string {
@@ -446,7 +457,6 @@ function trackerPanelMarkup(): string {
         <button class="scenemap-pill-action" data-action="edit" ${latest?.schemaMatchesCurrent ? "" : "disabled"}>Edit</button>
         <button class="scenemap-pill-action scenemap-danger" data-action="delete" ${latest ? "" : "disabled"}>Delete</button>
         <button class="scenemap-pill-action scenemap-pill-icon ${isRefreshingState ? "is-refreshing" : ""}" data-action="refresh" title="Refresh">${refreshSvg()}</button>
-        <button class="scenemap-pill-action scenemap-pill-icon ${settingsDraft.dirty ? "has-unsaved-settings" : ""}" data-action="open-settings" title="Settings" aria-label="Open SceneMap settings">${settingsSvg}</button>
       </header>
 
       <p class="scenemap-status ${state.generationActive ? "is-generating" : ""}">${statusMarkup()}</p>
@@ -468,9 +478,8 @@ function renderDrawerSettings() {
   const activePreset = settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   const presetDraft = getPresetEditorDraft(settings, settings.schemaPreset);
   const drawerTrackerMode = settings.trackerPlacement === "drawer";
-  rootRef.innerHTML = `
+  const settingsMarkup = `
     <div class="scenemap-shell scenemap-settings-shell">
-      ${drawerTrackerMode ? `<div class="scenemap-settings-nav"><button class="scenemap-pill-action" data-action="back-to-tracker">&larr; Tracker</button></div>` : ""}
       <p class="scenemap-settings-dirty" data-settings-dirty ${settingsDraft.dirty ? "" : "hidden"}>Unsaved preset changes</p>
       ${dockPanelError ? `<div class="scenemap-runtime-error">${escapeHtml(dockPanelError)}</div>` : ""}
       <section class="scenemap-settings-scroll">
@@ -556,6 +565,7 @@ function renderDrawerSettings() {
       </section>
     </div>
   `;
+  rootRef.innerHTML = drawerTrackerMode ? drawerPageMarkup(settingsMarkup) : settingsMarkup;
   mountSettingsSelects(settings);
 }
 
@@ -695,13 +705,12 @@ function handleClick(event: Event) {
   const button = target.closest<HTMLElement>("[data-action]");
   if (!button) return;
   const action = button.dataset.action;
-  if (action === "open-settings") {
-    drawerView = "settings";
-    tabHandle?.activate();
-    renderDrawerSettings();
-  }
-  if (action === "back-to-tracker" && mergeSettings(state.settings).trackerPlacement === "drawer") {
+  if (action === "show-tracker" && mergeSettings(state.settings).trackerPlacement === "drawer") {
     drawerView = "tracker";
+    renderDrawerContent();
+  }
+  if (action === "show-settings" && mergeSettings(state.settings).trackerPlacement === "drawer") {
+    drawerView = "settings";
     renderDrawerContent();
   }
   if (action === "refresh") requestState(true);
@@ -745,8 +754,6 @@ function updateSettingsDraft(settings: SceneMapSettings) {
 function revealUnsavedSettings() {
   const indicator = rootRef?.querySelector<HTMLElement>("[data-settings-dirty]");
   if (indicator) indicator.hidden = false;
-  dockRootRef?.querySelector<HTMLElement>("[data-action=\"open-settings\"]")?.classList.add("has-unsaved-settings");
-  rootRef?.querySelector<HTMLElement>("[data-action=\"open-settings\"]")?.classList.add("has-unsaved-settings");
 }
 
 function getPresetEditorDraft(settings: SceneMapSettings, key: string): PresetEditorDraft {
@@ -2009,7 +2016,7 @@ const styles = `
 .scenemap-loading-dots span:nth-child(3) { animation-delay: .32s; }
 [data-spindle-mount="chat_toolbar"]:has(.scenemap-chat-toolbar-root) { display: flex; align-items: center; gap: 2px; }
 .scenemap-chat-toolbar-root { display: inline-flex; align-items: center; }
-.scenemap-chat-toolbar-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 26px; padding: 0; border: 0; border-radius: var(--lcs-radius-xs, 6px); background: transparent; color: var(--lumiverse-text-dim, rgba(230, 230, 240, .4)); cursor: pointer; transition: color .12s ease, background .12s ease; }
+.scenemap-chat-toolbar-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 26px; padding: 0; border: 0; border-radius: var(--lumiverse-radius-sm, 5px); background: transparent; color: var(--lumiverse-text-dim, rgba(230, 230, 240, .4)); cursor: pointer; transition: color .12s ease, background .12s ease; }
 .scenemap-chat-toolbar-btn:hover:not(:disabled) { color: var(--lumiverse-text, rgba(230, 230, 240, .92)); background: var(--lumiverse-fill, rgba(255, 255, 255, .06)); }
 .scenemap-chat-toolbar-btn.is-attention { color: var(--lumiverse-primary, var(--lumiverse-accent)); background: color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 10%, transparent); }
 .scenemap-chat-toolbar-btn.is-generating { color: var(--lumiverse-success, var(--lumiverse-accent)); animation: scenemap-status-pulse 1.8s ease-in-out infinite; }
@@ -2018,7 +2025,7 @@ const styles = `
 .scenemap-chat-toolbar-btn svg { width: 14px; height: 14px; }
 .scenemap-toolbar, .scenemap-row, .scenemap-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scenemap-modal-spacer { flex: 1 1 auto; }
-.scenemap-card { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
+.scenemap-card { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: var(--lumiverse-radius, 8px); padding: 12px; }
 .scenemap-board { flex: 1 1 auto; min-height: 0; overflow: auto; background: transparent; border-color: transparent; padding: 0 10px 0 0; }
 .scenemap-empty { color: var(--lumiverse-text-muted); font-size: 13px; text-align: center; padding: 20px 4px; }
 .scenemap-section { padding: 10px 0 12px; }
@@ -2033,23 +2040,30 @@ const styles = `
 .scenemap-progress-field { gap: 6px; }
 .scenemap-progress-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .scenemap-progress-head strong { color: var(--lumiverse-text); font-size: 11px; font-weight: 750; font-variant-numeric: tabular-nums; }
-.scenemap-progress-track { height: 7px; border-radius: 999px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--lumiverse-border) 72%, transparent); background: color-mix(in srgb, var(--lumiverse-fill) 72%, transparent); }
+.scenemap-progress-track { height: 7px; border-radius: var(--lumiverse-radius-sm, 5px); overflow: hidden; border: 1px solid color-mix(in srgb, var(--lumiverse-border) 72%, transparent); background: color-mix(in srgb, var(--lumiverse-fill) 72%, transparent); }
 .scenemap-progress-track i { display: block; height: 100%; min-width: 2px; border-radius: inherit; background: var(--lumiverse-primary, var(--lumiverse-accent)); box-shadow: 0 0 10px color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 35%, transparent); }
 .scenemap-progress-field[data-progress-tone="success"] .scenemap-progress-track i { background: var(--lumiverse-success, var(--lumiverse-primary, var(--lumiverse-accent))); box-shadow: 0 0 10px color-mix(in srgb, var(--lumiverse-success, var(--lumiverse-primary, var(--lumiverse-accent))) 35%, transparent); }
 .scenemap-progress-field[data-progress-tone="warning"] .scenemap-progress-track i { background: var(--lumiverse-warning, var(--lumiverse-primary, var(--lumiverse-accent))); box-shadow: 0 0 10px color-mix(in srgb, var(--lumiverse-warning, var(--lumiverse-primary, var(--lumiverse-accent))) 35%, transparent); }
 .scenemap-progress-field[data-progress-tone="danger"] .scenemap-progress-track i { background: var(--lumiverse-danger, var(--lumiverse-primary, var(--lumiverse-accent))); box-shadow: 0 0 10px color-mix(in srgb, var(--lumiverse-danger, var(--lumiverse-primary, var(--lumiverse-accent))) 35%, transparent); }
 .scenemap-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .scenemap-chips.is-centered { justify-content: center; }
-.scenemap-chips b { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: 999px; padding: 4px 8px; font-size: 12px; font-weight: 600; }
+.scenemap-chips b { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: var(--lumiverse-radius, 8px); padding: 4px 8px; font-size: 12px; font-weight: 600; }
 .scenemap-character-grid { display: flex; flex-direction: column; gap: 14px; }
-.scenemap-character { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: 8px; padding: 10px; }
+.scenemap-character { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: var(--lumiverse-radius, 8px); padding: 10px; }
 .scenemap-character h4 { margin: 0 0 10px; color: color-mix(in srgb, var(--lumiverse-text) 72%, var(--lumiverse-primary, var(--lumiverse-accent)) 28%); font-size: 14px; font-weight: 760; }
+.scenemap-drawer-scroll { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; box-sizing: border-box; padding: 14px; }
+.scenemap-drawer-view { min-height: 0; }
+.scenemap-drawer-view > .scenemap-shell { flex: none; min-height: 0; overflow: visible; padding: 14px 0 0; }
+.scenemap-drawer-view .scenemap-board, .scenemap-drawer-view .scenemap-settings-scroll { flex: none; overflow: visible; }
+.scenemap-drawer-view .scenemap-settings-scroll { padding-right: 0; padding-bottom: 0; }
+.scenemap-view-tabs { display: flex; gap: 2px; width: 100%; box-sizing: border-box; padding: 3px; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius-md, 10px); background: var(--lumiverse-fill-subtle); }
+.scenemap-lv .scenemap-view-tabs button { flex: 1 1 0; min-width: 0; padding: 7px 10px; border: 1px solid transparent; border-radius: var(--lumiverse-radius, 8px); background: transparent; color: var(--lumiverse-text-dim); font-size: calc(12px * var(--lumiverse-font-scale, 1)); font-weight: 500; text-align: center; transition: color var(--lumiverse-transition-fast, .15s ease), background var(--lumiverse-transition-fast, .15s ease), border-color var(--lumiverse-transition-fast, .15s ease); }
+.scenemap-lv .scenemap-view-tabs button:hover:not(:disabled) { color: var(--lumiverse-text-muted); background: var(--lumiverse-fill-subtle); border-color: transparent; }
+.scenemap-lv .scenemap-view-tabs button.is-active { color: var(--lumiverse-primary-text, var(--lumiverse-primary)); background: var(--lumiverse-primary-015, color-mix(in srgb, var(--lumiverse-primary) 15%, transparent)); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary)); box-shadow: var(--lumiverse-shadow-sm); }
 .scenemap-settings-shell { gap: 0; }
-.scenemap-settings-nav { display: flex; flex: 0 0 auto; padding: 0 0 10px; border-bottom: 1px solid var(--lumiverse-border); }
-.scenemap-settings-nav + .scenemap-settings-dirty[hidden] + .scenemap-settings-scroll { padding-top: 12px; }
 .scenemap-settings-dirty { flex: 0 0 auto; margin: 0; padding: 0 0 10px; border-bottom: 1px solid var(--lumiverse-border); color: var(--lumiverse-warning, var(--lumiverse-accent)); font-size: 11px; }
 .scenemap-settings-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px 8px 12px 0; }
-.scenemap-settings-group { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
+.scenemap-settings-group { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: var(--lumiverse-radius, 8px); padding: 12px; }
 .scenemap-settings-group h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .scenemap-settings-shell label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
 .scenemap-auto-row { display: flex; flex-direction: column; gap: 9px; border-top: 1px solid var(--lumiverse-border); border-bottom: 1px solid var(--lumiverse-border); padding: 9px 0; margin: 10px 0; }
@@ -2059,7 +2073,7 @@ const styles = `
 .scenemap-settings-shell .scenemap-switch-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; color: var(--lumiverse-text); margin: 0; min-width: 0; }
 .scenemap-interval-field { margin: 0 !important; min-width: 0; }
 .scenemap-switch-row input { position: absolute; opacity: 0; pointer-events: none; }
-.scenemap-switch { position: relative; width: 32px; height: 18px; flex: 0 0 auto; border-radius: 999px; background: var(--lumiverse-fill); border: 1px solid var(--lumiverse-border-hover); transition: background .16s ease, border-color .16s ease; }
+.scenemap-switch { position: relative; width: 32px; height: 18px; flex: 0 0 auto; border-radius: var(--lumiverse-radius-md, 10px); background: var(--lumiverse-fill); border: 1px solid var(--lumiverse-border-hover); transition: background .16s ease, border-color .16s ease; }
 .scenemap-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--lumiverse-text-muted); transition: transform .16s ease, background .16s ease; }
 .scenemap-switch-row input:checked + .scenemap-switch { background: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
 .scenemap-switch-row input:checked + .scenemap-switch::after { transform: translateX(14px); background: var(--lumiverse-primary-contrast, #fff); }
@@ -2070,14 +2084,14 @@ const styles = `
 .scenemap-settings-preset-actions .scenemap-pill-action, .scenemap-settings-actions-left .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; padding: 5px 9px !important; min-height: 30px; }
 .scenemap-preset-editor { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--lumiverse-border); }
 .scenemap-preset-editor label { display: flex; flex-direction: column; gap: 6px; color: var(--lumiverse-text-muted); font-size: 12px; }
-.scenemap-preset-editor textarea { width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; border: 1px solid var(--lumiverse-border); border-radius: 8px; background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 10px 11px; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.scenemap-preset-editor textarea { width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius, 8px); background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 10px 11px; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .scenemap-preset-editor textarea[data-preset-editor="prompt"] { min-height: 150px; font-family: inherit; }
 .scenemap-preset-editor textarea:focus { outline: none; border-color: var(--lumiverse-primary, var(--lumiverse-accent)); box-shadow: 0 0 0 1px var(--lumiverse-primary-020, transparent); }
 .scenemap-preset-schema-error { margin-top: -4px; }
 .scenemap-preset-layout-row { display: flex; justify-content: flex-end; gap: 8px; }
 .scenemap-preset-layout-row .scenemap-primary { min-width: 112px; }
 .scenemap-settings-shell input:not([type="checkbox"]), .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-name-editor input {
-  width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: 6px;
+  width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius-sm, 5px);
   background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 7px 9px; font: inherit;
 }
 .scenemap-native-select { width: 100%; min-width: 0; }
@@ -2089,7 +2103,7 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-layout-editor { display: flex; flex-direction: column; gap: 12px; color: var(--lumiverse-text); }
 .scenemap-layout-intro { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
 .scenemap-layout-sections { display: flex; flex-direction: column; gap: 12px; max-height: min(58vh, 520px); overflow: auto; padding-right: 4px; }
-.scenemap-layout-section { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.scenemap-layout-section { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: var(--lumiverse-radius, 8px); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .scenemap-layout-section-header { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 10px; align-items: end; }
 .scenemap-layout-section label, .scenemap-layout-field label { display: flex; flex-direction: column; gap: 5px; color: var(--lumiverse-text-muted); font-size: 12px; }
 .scenemap-layout-section label.scenemap-layout-check-row, .scenemap-layout-field label.scenemap-layout-check-row { display: inline-flex; flex-direction: row; align-items: center; gap: 7px; margin: 0; }
@@ -2106,7 +2120,7 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-layout-child-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .scenemap-layout-child-header strong { font-size: 12px; color: var(--lumiverse-text-muted); text-transform: uppercase; }
 .scenemap-layout-child-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto auto auto; gap: 6px; align-items: center; }
-.scenemap-lv button, .scenemap-editor button, .scenemap-layout-editor button, .scenemap-name-editor button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: 6px; padding: 7px 10px; cursor: pointer; font: inherit; }
+.scenemap-lv button, .scenemap-editor button, .scenemap-layout-editor button, .scenemap-name-editor button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: var(--lumiverse-radius-sm, 5px); padding: 7px 10px; cursor: pointer; font: inherit; }
 .scenemap-lv button:hover:not(:disabled), .scenemap-editor button:hover:not(:disabled), .scenemap-layout-editor button:hover:not(:disabled), .scenemap-name-editor button:hover:not(:disabled) { border-color: var(--lumiverse-border-hover); }
 .scenemap-lv button:disabled, .scenemap-editor button:disabled, .scenemap-layout-editor button:disabled, .scenemap-name-editor button:disabled { opacity: 0.45; cursor: default; }
 .scenemap-lv .scenemap-primary, .scenemap-editor .scenemap-primary, .scenemap-layout-editor .scenemap-primary, .scenemap-name-editor .scenemap-primary { background: var(--lumiverse-primary-015, color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 15%, transparent)); color: var(--lumiverse-primary-text, var(--lumiverse-primary, var(--lumiverse-accent))); border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))); }
@@ -2114,12 +2128,10 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-lv .scenemap-danger, .scenemap-editor .scenemap-danger, .scenemap-layout-editor .scenemap-danger, .scenemap-name-editor .scenemap-danger { background: var(--lumiverse-danger-015, rgba(239, 68, 68, .15)); color: var(--lumiverse-danger, #ef4444); border-color: var(--lumiverse-danger-050, rgba(239, 68, 68, .5)); }
 .scenemap-lv .scenemap-danger:hover:not(:disabled), .scenemap-editor .scenemap-danger:hover:not(:disabled), .scenemap-layout-editor .scenemap-danger:hover:not(:disabled), .scenemap-name-editor .scenemap-danger:hover:not(:disabled) { background: var(--lumiverse-danger-020, rgba(239, 68, 68, .2)); border-color: var(--lumiverse-danger, #ef4444); }
 .scenemap-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
-.scenemap-pill-action { border-radius: 999px !important; padding: 7px 13px !important; min-height: 34px; }
+.scenemap-pill-action { border-radius: var(--lumiverse-radius, 8px) !important; padding: 7px 13px !important; min-height: 34px; }
 .scenemap-pill-icon { width: 34px; min-width: 34px; padding: 0 !important; display: inline-flex; align-items: center; justify-content: center; }
 .scenemap-pill-icon.is-refreshing svg { animation: scenemap-spin .9s linear infinite; }
-.scenemap-pill-icon.has-unsaved-settings { position: relative; }
-.scenemap-pill-icon.has-unsaved-settings::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; border-radius: 50%; background: var(--lumiverse-warning, var(--lumiverse-accent)); box-shadow: 0 0 0 2px var(--lumiverse-bg, #11131d); }
-.scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: 8px; padding: 10px; font-size: 12px; }
+.scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: var(--lumiverse-radius, 8px); padding: 10px; font-size: 12px; }
 @media (max-width: 760px) {
   .scenemap-layout-section-header { grid-template-columns: 1fr; align-items: stretch; }
   .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: repeat(3, 36px) 1fr; align-items: center; }
