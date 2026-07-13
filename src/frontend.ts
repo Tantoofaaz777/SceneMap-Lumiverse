@@ -2350,9 +2350,10 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-layout-drag-handle svg { width: 18px; height: 18px; pointer-events: none; }
 .scenemap-layout-editor .scenemap-layout-drag-handle:hover, .scenemap-layout-editor .scenemap-layout-drag-handle:focus-visible { color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
 .scenemap-layout-editor .scenemap-layout-drag-handle[aria-grabbed="true"] { cursor: grabbing; color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
-.scenemap-layout-drag-ghost { opacity: .24 !important; }
+.scenemap-layout-drag-ghost { opacity: 1 !important; border: 1px dashed var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))) !important; border-radius: var(--lumiverse-radius, 8px); background: linear-gradient(var(--lumiverse-primary-010, rgba(128, 128, 128, .1)), var(--lumiverse-primary-010, rgba(128, 128, 128, .1))), var(--lumiverse-bg-deep, #0a0812) !important; }
+.scenemap-layout-drag-ghost > * { visibility: hidden !important; }
 .scenemap-layout-drag-chosen { border-color: var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))) !important; }
-.scenemap-layout-drag-active, .scenemap-layout-drag-fallback { opacity: .96 !important; box-shadow: 0 12px 30px rgba(0, 0, 0, .28); }
+.scenemap-layout-drag-active, .scenemap-layout-drag-fallback { opacity: 1 !important; border: 1px solid var(--lumiverse-primary-050, var(--lumiverse-primary, var(--lumiverse-accent))) !important; border-radius: var(--lumiverse-radius, 8px); background: linear-gradient(var(--lumiverse-fill-subtle, rgba(128, 128, 128, .12)), var(--lumiverse-fill-subtle, rgba(128, 128, 128, .12))), var(--lumiverse-bg-deep, #0a0812) !important; box-shadow: 0 12px 30px rgba(0, 0, 0, .38); }
 .scenemap-layout-drag-fallback { pointer-events: none !important; z-index: 10020 !important; }
 .scenemap-layout-drag-fallback input:not([type="checkbox"]) { width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius-sm, 5px); background: var(--lumiverse-secondary, rgba(128, 128, 128, .15)); color: var(--lumiverse-text); padding: 7px 9px; font: inherit; }
 .scenemap-layout-drag-fallback button { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill); color: var(--lumiverse-text); border-radius: var(--lumiverse-radius-sm, 5px); font: inherit; }
