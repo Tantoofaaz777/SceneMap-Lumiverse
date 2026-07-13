@@ -57,6 +57,9 @@ let dockResizeDrag: {
   pointerId: number;
   startPosition: number;
   startSize: number;
+  latestPosition: number;
+  animationFrame: number | null;
+  appRoot: HTMLElement | null;
   previousTransition: string;
 } | null = null;
 let dockPanelCreatedAt = 0;
@@ -255,10 +258,13 @@ function ensureDockPanel() {
 
 function watchDockResizeHandle() {
   dockResizeObserver?.disconnect();
+  let observedHost: HTMLElement | null = null;
 
   const decorate = () => {
     const root = dockRootRef;
-    if (!root?.isConnected) return;
+    if (!root?.isConnected) return null;
+    const host = findDockPanelHost(root);
+    if (!host) return null;
 
     const rootRect = root.getBoundingClientRect();
     const isSideDock = rootRect.height >= window.innerHeight * 0.6;
@@ -266,7 +272,7 @@ function watchDockResizeHandle() {
       ? (rootRect.left < window.innerWidth - rootRect.right ? "right" : "left")
       : (rootRect.top < window.innerHeight - rootRect.bottom ? "bottom" : "top");
     setDockResizeIndicatorEdge(root, fallbackEdge);
-    applyDockPanelSize(root, fallbackEdge, dockPanelSize);
+    applyDockPanelSize(root, fallbackEdge, dockPanelSize, host);
 
     for (let ancestor = root.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
       for (const child of ancestor.children) {
@@ -282,15 +288,30 @@ function watchDockResizeHandle() {
           ? (handleRect.left + handleRect.width / 2 < rootRect.left + rootRect.width / 2 ? "left" : "right")
           : (handleRect.top + handleRect.height / 2 < rootRect.top + rootRect.height / 2 ? "top" : "bottom");
         setDockResizeIndicatorEdge(root, edge);
-        applyDockPanelSize(root, edge, dockPanelSize);
-        return;
+        applyDockPanelSize(root, edge, dockPanelSize, host);
+        return host;
       }
     }
+    return host;
   };
 
-  dockResizeObserver = new MutationObserver(decorate);
+  dockResizeObserver = new MutationObserver((records) => {
+    const root = dockRootRef;
+    if (root?.isConnected && records.every((record) => root.contains(record.target))) return;
+    const host = decorate();
+    if (host && host !== observedHost) {
+      observedHost = host;
+      dockResizeObserver?.disconnect();
+      dockResizeObserver?.observe(host, { childList: true, subtree: true });
+    }
+  });
   dockResizeObserver.observe(document.documentElement, { childList: true, subtree: true });
-  decorate();
+  const host = decorate();
+  if (host) {
+    observedHost = host;
+    dockResizeObserver.disconnect();
+    dockResizeObserver.observe(host, { childList: true, subtree: true });
+  }
 }
 
 function setDockResizeIndicatorEdge(root: HTMLElement, edge: "left" | "right" | "top" | "bottom") {
@@ -318,13 +339,17 @@ function findDockPanelHost(root: HTMLElement): HTMLElement | null {
   return null;
 }
 
-function applyDockPanelSize(root: HTMLElement, edge: "left" | "right" | "top" | "bottom", size: number) {
-  const host = findDockPanelHost(root);
+function applyDockPanelSize(
+  root: HTMLElement,
+  edge: "left" | "right" | "top" | "bottom",
+  size: number,
+  host = findDockPanelHost(root),
+  appRoot = root.closest<HTMLElement>("[data-app-root]"),
+) {
   if (!host) return;
   if (edge === "left" || edge === "right") host.style.width = `${size}px`;
   else host.style.height = `${size}px`;
 
-  const appRoot = root.closest<HTMLElement>("[data-app-root]");
   if (!appRoot) return;
   const insetProperty = edge === "right"
     ? "--spindle-dock-left"
@@ -345,6 +370,12 @@ function addDockResizeListeners(root: HTMLElement) {
 
 function removeDockResizeListeners(root: HTMLElement | null) {
   if (!root) return;
+  const drag = dockResizeDrag;
+  if (drag?.root === root) {
+    if (drag.animationFrame !== null) cancelAnimationFrame(drag.animationFrame);
+    drag.host.style.transition = drag.previousTransition;
+    dockResizeDrag = null;
+  }
   root.removeEventListener("pointerdown", handleDockResizePointerDown);
   root.removeEventListener("pointermove", handleDockResizePointerMove);
   root.removeEventListener("pointerup", handleDockResizePointerEnd);
@@ -376,6 +407,9 @@ function handleDockResizePointerDown(event: PointerEvent) {
     pointerId: event.pointerId,
     startPosition: edge === "left" || edge === "right" ? event.clientX : event.clientY,
     startSize: edge === "left" || edge === "right" ? hostRect.width : hostRect.height,
+    latestPosition: edge === "left" || edge === "right" ? event.clientX : event.clientY,
+    animationFrame: null,
+    appRoot: root.closest<HTMLElement>("[data-app-root]"),
     previousTransition: host.style.transition,
   };
   host.style.transition = "none";
@@ -387,17 +421,31 @@ function handleDockResizePointerDown(event: PointerEvent) {
 function handleDockResizePointerMove(event: PointerEvent) {
   const drag = dockResizeDrag;
   if (!drag || event.pointerId !== drag.pointerId) return;
-  const position = drag.edge === "left" || drag.edge === "right" ? event.clientX : event.clientY;
+  drag.latestPosition = drag.edge === "left" || drag.edge === "right" ? event.clientX : event.clientY;
+  if (drag.animationFrame === null) {
+    drag.animationFrame = requestAnimationFrame(() => {
+      if (dockResizeDrag !== drag) return;
+      drag.animationFrame = null;
+      applyDockResizePosition(drag);
+    });
+  }
+  event.preventDefault();
+}
+
+function applyDockResizePosition(drag: NonNullable<typeof dockResizeDrag>) {
+  const position = drag.latestPosition;
   const delta = position - drag.startPosition;
   const directionalDelta = drag.edge === "left" || drag.edge === "top" ? -delta : delta;
   dockPanelSize = Math.max(300, Math.min(620, Math.round(drag.startSize + directionalDelta)));
-  applyDockPanelSize(drag.root, drag.edge, dockPanelSize);
-  event.preventDefault();
+  applyDockPanelSize(drag.root, drag.edge, dockPanelSize, drag.host, drag.appRoot);
 }
 
 function handleDockResizePointerEnd(event: PointerEvent) {
   const drag = dockResizeDrag;
   if (!drag || event.pointerId !== drag.pointerId) return;
+  drag.latestPosition = drag.edge === "left" || drag.edge === "right" ? event.clientX : event.clientY;
+  if (drag.animationFrame !== null) cancelAnimationFrame(drag.animationFrame);
+  applyDockResizePosition(drag);
   dockResizeDrag = null;
   drag.host.style.transition = drag.previousTransition;
   if (drag.root.hasPointerCapture(event.pointerId)) drag.root.releasePointerCapture(event.pointerId);

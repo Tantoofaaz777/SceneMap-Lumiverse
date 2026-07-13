@@ -451,15 +451,19 @@ function ensureDockPanel() {
 }
 function watchDockResizeHandle() {
   dockResizeObserver?.disconnect();
+  let observedHost = null;
   const decorate = () => {
     const root = dockRootRef;
     if (!root?.isConnected)
-      return;
+      return null;
+    const host2 = findDockPanelHost(root);
+    if (!host2)
+      return null;
     const rootRect = root.getBoundingClientRect();
     const isSideDock = rootRect.height >= window.innerHeight * 0.6;
     const fallbackEdge = isSideDock ? rootRect.left < window.innerWidth - rootRect.right ? "right" : "left" : rootRect.top < window.innerHeight - rootRect.bottom ? "bottom" : "top";
     setDockResizeIndicatorEdge(root, fallbackEdge);
-    applyDockPanelSize(root, fallbackEdge, dockPanelSize);
+    applyDockPanelSize(root, fallbackEdge, dockPanelSize, host2);
     for (let ancestor = root.parentElement;ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
       for (const child of ancestor.children) {
         if (!(child instanceof HTMLElement) || child.contains(root))
@@ -473,14 +477,30 @@ function watchDockResizeHandle() {
         const handleRect = child.getBoundingClientRect();
         const edge = cursor === "ew-resize" ? handleRect.left + handleRect.width / 2 < rootRect.left + rootRect.width / 2 ? "left" : "right" : handleRect.top + handleRect.height / 2 < rootRect.top + rootRect.height / 2 ? "top" : "bottom";
         setDockResizeIndicatorEdge(root, edge);
-        applyDockPanelSize(root, edge, dockPanelSize);
-        return;
+        applyDockPanelSize(root, edge, dockPanelSize, host2);
+        return host2;
       }
     }
+    return host2;
   };
-  dockResizeObserver = new MutationObserver(decorate);
+  dockResizeObserver = new MutationObserver((records) => {
+    const root = dockRootRef;
+    if (root?.isConnected && records.every((record) => root.contains(record.target)))
+      return;
+    const host2 = decorate();
+    if (host2 && host2 !== observedHost) {
+      observedHost = host2;
+      dockResizeObserver?.disconnect();
+      dockResizeObserver?.observe(host2, { childList: true, subtree: true });
+    }
+  });
   dockResizeObserver.observe(document.documentElement, { childList: true, subtree: true });
-  decorate();
+  const host = decorate();
+  if (host) {
+    observedHost = host;
+    dockResizeObserver.disconnect();
+    dockResizeObserver.observe(host, { childList: true, subtree: true });
+  }
 }
 function setDockResizeIndicatorEdge(root, edge) {
   root.classList.remove("scenemap-dock-resize-edge-left", "scenemap-dock-resize-edge-right", "scenemap-dock-resize-edge-top", "scenemap-dock-resize-edge-bottom");
@@ -504,15 +524,13 @@ function findDockPanelHost(root) {
   }
   return null;
 }
-function applyDockPanelSize(root, edge, size) {
-  const host = findDockPanelHost(root);
+function applyDockPanelSize(root, edge, size, host = findDockPanelHost(root), appRoot = root.closest("[data-app-root]")) {
   if (!host)
     return;
   if (edge === "left" || edge === "right")
     host.style.width = `${size}px`;
   else
     host.style.height = `${size}px`;
-  const appRoot = root.closest("[data-app-root]");
   if (!appRoot)
     return;
   const insetProperty = edge === "right" ? "--spindle-dock-left" : edge === "left" ? "--spindle-dock-right" : edge === "bottom" ? "--spindle-dock-top" : "--spindle-dock-bottom";
@@ -527,6 +545,13 @@ function addDockResizeListeners(root) {
 function removeDockResizeListeners(root) {
   if (!root)
     return;
+  const drag = dockResizeDrag;
+  if (drag?.root === root) {
+    if (drag.animationFrame !== null)
+      cancelAnimationFrame(drag.animationFrame);
+    drag.host.style.transition = drag.previousTransition;
+    dockResizeDrag = null;
+  }
   root.removeEventListener("pointerdown", handleDockResizePointerDown);
   root.removeEventListener("pointermove", handleDockResizePointerMove);
   root.removeEventListener("pointerup", handleDockResizePointerEnd);
@@ -554,6 +579,9 @@ function handleDockResizePointerDown(event) {
     pointerId: event.pointerId,
     startPosition: edge === "left" || edge === "right" ? event.clientX : event.clientY,
     startSize: edge === "left" || edge === "right" ? hostRect.width : hostRect.height,
+    latestPosition: edge === "left" || edge === "right" ? event.clientX : event.clientY,
+    animationFrame: null,
+    appRoot: root.closest("[data-app-root]"),
     previousTransition: host.style.transition
   };
   host.style.transition = "none";
@@ -565,17 +593,32 @@ function handleDockResizePointerMove(event) {
   const drag = dockResizeDrag;
   if (!drag || event.pointerId !== drag.pointerId)
     return;
-  const position = drag.edge === "left" || drag.edge === "right" ? event.clientX : event.clientY;
+  drag.latestPosition = drag.edge === "left" || drag.edge === "right" ? event.clientX : event.clientY;
+  if (drag.animationFrame === null) {
+    drag.animationFrame = requestAnimationFrame(() => {
+      if (dockResizeDrag !== drag)
+        return;
+      drag.animationFrame = null;
+      applyDockResizePosition(drag);
+    });
+  }
+  event.preventDefault();
+}
+function applyDockResizePosition(drag) {
+  const position = drag.latestPosition;
   const delta = position - drag.startPosition;
   const directionalDelta = drag.edge === "left" || drag.edge === "top" ? -delta : delta;
   dockPanelSize = Math.max(300, Math.min(620, Math.round(drag.startSize + directionalDelta)));
-  applyDockPanelSize(drag.root, drag.edge, dockPanelSize);
-  event.preventDefault();
+  applyDockPanelSize(drag.root, drag.edge, dockPanelSize, drag.host, drag.appRoot);
 }
 function handleDockResizePointerEnd(event) {
   const drag = dockResizeDrag;
   if (!drag || event.pointerId !== drag.pointerId)
     return;
+  drag.latestPosition = drag.edge === "left" || drag.edge === "right" ? event.clientX : event.clientY;
+  if (drag.animationFrame !== null)
+    cancelAnimationFrame(drag.animationFrame);
+  applyDockResizePosition(drag);
   dockResizeDrag = null;
   drag.host.style.transition = drag.previousTransition;
   if (drag.root.hasPointerCapture(event.pointerId))
