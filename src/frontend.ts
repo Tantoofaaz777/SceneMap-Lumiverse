@@ -603,6 +603,7 @@ function mountSettingsSelects(settings: SceneMapSettings) {
       options,
       value,
       portal: true,
+      triggerClassName: "scenemap-secondary-control",
       ariaLabel: key === "connectionId"
         ? "Connection"
         : key === "schemaPreset"
@@ -1491,6 +1492,7 @@ function mountLayoutSelects(
       options: selectOptions,
       value,
       portal: true,
+      triggerClassName: "scenemap-secondary-control",
       ariaLabel,
       searchThreshold: searchable ? 8 : Number.MAX_SAFE_INTEGER,
       searchPlaceholder: searchable ? "Search fields..." : undefined,
@@ -2104,7 +2106,7 @@ const styles = `
 .scenemap-settings-preset-actions .scenemap-pill-action, .scenemap-settings-actions-left .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; padding: 5px 9px !important; min-height: 30px; }
 .scenemap-preset-editor { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--lumiverse-border); }
 .scenemap-preset-editor label { display: flex; flex-direction: column; gap: 6px; color: var(--lumiverse-text-muted); font-size: 12px; }
-.scenemap-preset-editor textarea { width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius, 8px); background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 10px 11px; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.scenemap-preset-editor textarea { width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius, 8px); background: var(--lumiverse-secondary, rgba(128, 128, 128, .15)); color: var(--lumiverse-text); padding: 10px 11px; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .scenemap-preset-editor textarea[data-preset-editor="prompt"] { min-height: 150px; font-family: inherit; }
 .scenemap-preset-editor textarea:focus { outline: none; border-color: var(--lumiverse-primary, var(--lumiverse-accent)); box-shadow: 0 0 0 1px var(--lumiverse-primary-020, transparent); }
 .scenemap-preset-schema-error { margin-top: -4px; }
@@ -2112,9 +2114,11 @@ const styles = `
 .scenemap-preset-layout-row .scenemap-primary { min-width: 112px; }
 .scenemap-settings-shell input:not([type="checkbox"]), .scenemap-editor textarea, .scenemap-layout-editor input, .scenemap-name-editor input {
   width: 100%; box-sizing: border-box; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius-sm, 5px);
-  background: var(--lumiverse-fill); color: var(--lumiverse-text); padding: 7px 9px; font: inherit;
+  background: var(--lumiverse-secondary, rgba(128, 128, 128, .15)); color: var(--lumiverse-text); padding: 7px 9px; font: inherit;
 }
 .scenemap-native-select { width: 100%; min-width: 0; }
+.scenemap-secondary-control { background: var(--lumiverse-secondary, rgba(128, 128, 128, .15)) !important; }
+body:has(.scenemap-secondary-control[aria-expanded="true"]) > [role="listbox"] { background: var(--lumiverse-secondary, rgba(128, 128, 128, .15)) !important; }
 body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-index: 10004 !important; }
 .scenemap-editor { display: flex; flex-direction: column; gap: 10px; }
 .scenemap-name-editor { display: flex; flex-direction: column; gap: 12px; color: var(--lumiverse-text); }
