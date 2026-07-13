@@ -631,8 +631,6 @@ function handleClick(event: Event) {
   if (action === "refresh") requestState(true);
   if (action === "generate") {
     if (isGenerationRequestPending) return;
-    ensureDockPanel();
-    dockPanelHandle?.expand();
     isGenerationRequestPending = true;
     renderDockPanel();
     renderChatToolbar();

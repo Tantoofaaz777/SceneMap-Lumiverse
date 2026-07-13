@@ -2019,8 +2019,6 @@ function handleClick(event) {
   if (action === "generate") {
     if (isGenerationRequestPending)
       return;
-    ensureDockPanel();
-    dockPanelHandle?.expand();
     isGenerationRequestPending = true;
     renderDockPanel();
     renderChatToolbar();
