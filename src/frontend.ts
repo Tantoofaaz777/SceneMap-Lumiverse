@@ -49,6 +49,16 @@ let toolbarRootRef: Element | null = null;
 let tabHandle: ReturnType<SpindleFrontendContext["ui"]["registerDrawerTab"]> | null = null;
 let dockPanelHandle: ReturnType<SpindleFrontendContext["ui"]["requestDockPanel"]> | null = null;
 let dockResizeObserver: MutationObserver | null = null;
+let dockPanelSize = 380;
+let dockResizeDrag: {
+  root: HTMLElement;
+  host: HTMLElement;
+  edge: "left" | "right" | "top" | "bottom";
+  pointerId: number;
+  startPosition: number;
+  startSize: number;
+  previousTransition: string;
+} | null = null;
 let dockPanelCreatedAt = 0;
 let dockPanelError: string | null = null;
 let isRefreshingState = false;
@@ -94,6 +104,7 @@ export function setup(ctx: SpindleFrontendContext) {
   pendingAutomaticSettings = {};
   if (automaticSaveTimer) clearTimeout(automaticSaveTimer);
   automaticSaveTimer = null;
+  dockPanelSize = readStoredDockPanelSize();
   ctxRef = ctx;
   const removeStyle = ctx.dom.addStyle(styles);
   const tab = ctx.ui.registerDrawerTab({
@@ -178,6 +189,7 @@ export function setup(ctx: SpindleFrontendContext) {
     rootRef?.removeEventListener("change", handleChange);
     rootRef?.removeEventListener("input", handleInput);
     dockRootRef?.removeEventListener("click", handleClick);
+    removeDockResizeListeners(dockRootRef);
     toolbarRoot.removeEventListener("click", handleClick);
     offBackend();
     for (const off of offEvents) off();
@@ -196,6 +208,7 @@ export function setup(ctx: SpindleFrontendContext) {
     tabHandle = null;
     dockPanelHandle = null;
     dockResizeObserver = null;
+    dockResizeDrag = null;
     dockPanelCreatedAt = 0;
     dockPanelError = null;
     isGenerationRequestPending = false;
@@ -210,13 +223,14 @@ function ensureDockPanel() {
   if (!ctx) return;
   if (dockRootRef && dockPanelHandle && (dockRootRef.isConnected || Date.now() - dockPanelCreatedAt < 1000)) return;
   dockRootRef?.removeEventListener("click", handleClick);
+  removeDockResizeListeners(dockRootRef);
   dockPanelHandle?.destroy();
   let panel: ReturnType<SpindleFrontendContext["ui"]["requestDockPanel"]>;
   try {
     panel = ctx.ui.requestDockPanel({
       edge: "right",
       title: "SceneMap",
-      size: 380,
+      size: dockPanelSize,
       minSize: 300,
       maxSize: 620,
       resizable: true,
@@ -234,6 +248,7 @@ function ensureDockPanel() {
   dockRootRef = panel.root;
   dockRootRef.classList.add("scenemap-lv", "scenemap-dock-root");
   dockRootRef.addEventListener("click", handleClick);
+  addDockResizeListeners(dockRootRef);
   renderDockPanel();
   watchDockResizeHandle();
 }
@@ -251,6 +266,7 @@ function watchDockResizeHandle() {
       ? (rootRect.left < window.innerWidth - rootRect.right ? "right" : "left")
       : (rootRect.top < window.innerHeight - rootRect.bottom ? "bottom" : "top");
     setDockResizeIndicatorEdge(root, fallbackEdge);
+    applyDockPanelSize(root, fallbackEdge, dockPanelSize);
 
     for (let ancestor = root.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
       for (const child of ancestor.children) {
@@ -266,6 +282,7 @@ function watchDockResizeHandle() {
           ? (handleRect.left + handleRect.width / 2 < rootRect.left + rootRect.width / 2 ? "left" : "right")
           : (handleRect.top + handleRect.height / 2 < rootRect.top + rootRect.height / 2 ? "top" : "bottom");
         setDockResizeIndicatorEdge(root, edge);
+        applyDockPanelSize(root, edge, dockPanelSize);
         return;
       }
     }
@@ -284,6 +301,115 @@ function setDockResizeIndicatorEdge(root: HTMLElement, edge: "left" | "right" | 
     "scenemap-dock-resize-edge-bottom",
   );
   root.classList.add(`scenemap-dock-resize-edge-${edge}`);
+}
+
+function getDockResizeIndicatorEdge(root: HTMLElement): "left" | "right" | "top" | "bottom" | null {
+  if (root.classList.contains("scenemap-dock-resize-edge-left")) return "left";
+  if (root.classList.contains("scenemap-dock-resize-edge-right")) return "right";
+  if (root.classList.contains("scenemap-dock-resize-edge-top")) return "top";
+  if (root.classList.contains("scenemap-dock-resize-edge-bottom")) return "bottom";
+  return null;
+}
+
+function findDockPanelHost(root: HTMLElement): HTMLElement | null {
+  for (let ancestor = root.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+    if (getComputedStyle(ancestor).position === "fixed") return ancestor;
+  }
+  return null;
+}
+
+function applyDockPanelSize(root: HTMLElement, edge: "left" | "right" | "top" | "bottom", size: number) {
+  const host = findDockPanelHost(root);
+  if (!host) return;
+  if (edge === "left" || edge === "right") host.style.width = `${size}px`;
+  else host.style.height = `${size}px`;
+}
+
+function addDockResizeListeners(root: HTMLElement) {
+  root.addEventListener("pointerdown", handleDockResizePointerDown);
+  root.addEventListener("pointermove", handleDockResizePointerMove);
+  root.addEventListener("pointerup", handleDockResizePointerEnd);
+  root.addEventListener("pointercancel", handleDockResizePointerEnd);
+}
+
+function removeDockResizeListeners(root: HTMLElement | null) {
+  if (!root) return;
+  root.removeEventListener("pointerdown", handleDockResizePointerDown);
+  root.removeEventListener("pointermove", handleDockResizePointerMove);
+  root.removeEventListener("pointerup", handleDockResizePointerEnd);
+  root.removeEventListener("pointercancel", handleDockResizePointerEnd);
+}
+
+function handleDockResizePointerDown(event: PointerEvent) {
+  if (event.button !== 0 || !(event.currentTarget instanceof HTMLElement)) return;
+  const root = event.currentTarget;
+  const edge = getDockResizeIndicatorEdge(root);
+  if (!edge) return;
+  const rect = root.getBoundingClientRect();
+  const distance = edge === "left"
+    ? Math.abs(event.clientX - rect.left)
+    : edge === "right"
+      ? Math.abs(event.clientX - rect.right)
+      : edge === "top"
+        ? Math.abs(event.clientY - rect.top)
+        : Math.abs(event.clientY - rect.bottom);
+  if (distance > 8) return;
+
+  const host = findDockPanelHost(root);
+  if (!host) return;
+  const hostRect = host.getBoundingClientRect();
+  dockResizeDrag = {
+    root,
+    host,
+    edge,
+    pointerId: event.pointerId,
+    startPosition: edge === "left" || edge === "right" ? event.clientX : event.clientY,
+    startSize: edge === "left" || edge === "right" ? hostRect.width : hostRect.height,
+    previousTransition: host.style.transition,
+  };
+  host.style.transition = "none";
+  root.setPointerCapture(event.pointerId);
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function handleDockResizePointerMove(event: PointerEvent) {
+  const drag = dockResizeDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  const position = drag.edge === "left" || drag.edge === "right" ? event.clientX : event.clientY;
+  const delta = position - drag.startPosition;
+  const directionalDelta = drag.edge === "left" || drag.edge === "top" ? -delta : delta;
+  dockPanelSize = Math.max(300, Math.min(620, Math.round(drag.startSize + directionalDelta)));
+  applyDockPanelSize(drag.root, drag.edge, dockPanelSize);
+  event.preventDefault();
+}
+
+function handleDockResizePointerEnd(event: PointerEvent) {
+  const drag = dockResizeDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  dockResizeDrag = null;
+  drag.host.style.transition = drag.previousTransition;
+  if (drag.root.hasPointerCapture(event.pointerId)) drag.root.releasePointerCapture(event.pointerId);
+  storeDockPanelSize(dockPanelSize);
+  event.preventDefault();
+}
+
+function readStoredDockPanelSize(): number {
+  try {
+    const value = Number(localStorage.getItem("scenemap:dock-panel-size"));
+    if (Number.isFinite(value) && value >= 300 && value <= 620) return Math.round(value);
+  } catch {
+    // Storage can be unavailable in restricted browser contexts.
+  }
+  return 380;
+}
+
+function storeDockPanelSize(size: number) {
+  try {
+    localStorage.setItem("scenemap:dock-panel-size", String(size));
+  } catch {
+    // Resizing still works for the current session when storage is unavailable.
+  }
 }
 
 function send(payload: Record<string, unknown>) {
@@ -2083,13 +2209,14 @@ function refreshSvg(): string {
 const styles = `
 .scenemap-lv { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; color: var(--lumiverse-text); }
 .scenemap-dock-root { position: relative; }
-.scenemap-dock-root::after { content: ""; position: absolute; z-index: 5; pointer-events: none; border-radius: 999px; background: var(--lumiverse-primary, var(--lumiverse-accent, #8ab4f8)); opacity: .52; transition: opacity .15s ease; }
-.scenemap-dock-resize-edge-left::after, .scenemap-dock-resize-edge-right::after { top: 10px; bottom: 10px; width: 2px; }
-.scenemap-dock-resize-edge-left::after { left: 0; }
-.scenemap-dock-resize-edge-right::after { right: 0; }
-.scenemap-dock-resize-edge-top::after, .scenemap-dock-resize-edge-bottom::after { left: 10px; right: 10px; height: 2px; }
-.scenemap-dock-resize-edge-top::after { top: 0; }
-.scenemap-dock-resize-edge-bottom::after { bottom: 0; }
+.scenemap-dock-root::after { content: ""; position: absolute; z-index: 5; pointer-events: auto; touch-action: none; box-sizing: border-box; opacity: .62; transition: opacity .15s ease; }
+.scenemap-dock-root::after:hover { opacity: 1; }
+.scenemap-dock-resize-edge-left::after, .scenemap-dock-resize-edge-right::after { top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.scenemap-dock-resize-edge-left::after { left: 0; border-left: 2px solid var(--lumiverse-primary, var(--lumiverse-accent, #8ab4f8)); }
+.scenemap-dock-resize-edge-right::after { right: 0; border-right: 2px solid var(--lumiverse-primary, var(--lumiverse-accent, #8ab4f8)); }
+.scenemap-dock-resize-edge-top::after, .scenemap-dock-resize-edge-bottom::after { left: 0; right: 0; height: 6px; cursor: ns-resize; }
+.scenemap-dock-resize-edge-top::after { top: 0; border-top: 2px solid var(--lumiverse-primary, var(--lumiverse-accent, #8ab4f8)); }
+.scenemap-dock-resize-edge-bottom::after { bottom: 0; border-bottom: 2px solid var(--lumiverse-primary, var(--lumiverse-accent, #8ab4f8)); }
 .scenemap-dock-resize-handle { background: transparent !important; z-index: 4 !important; }
 .scenemap-dock-resize-horizontal { width: 4px !important; }
 .scenemap-dock-resize-vertical { height: 4px !important; }
