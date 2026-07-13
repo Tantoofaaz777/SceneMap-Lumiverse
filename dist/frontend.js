@@ -1956,12 +1956,18 @@ function renderDrawerSettings() {
           <div class="scenemap-preset-editor">
             <label>
               <span>Schema (JSON)</span>
-              <textarea data-preset-editor="schema" spellcheck="false" aria-label="Schema JSON for ${escapeAttr(activePreset.name)}">${escapeHtml(presetDraft.schemaText)}</textarea>
+              <div class="scenemap-expandable-textarea">
+                <textarea data-preset-editor="schema" spellcheck="false" aria-label="Schema JSON for ${escapeAttr(activePreset.name)}">${escapeHtml(presetDraft.schemaText)}</textarea>
+                ${expandEditorButton("schema")}
+              </div>
             </label>
             <div class="scenemap-inline-error scenemap-preset-schema-error" data-preset-schema-error ${presetDraft.schemaError ? "" : "hidden"}>${escapeHtml(presetDraft.schemaError ?? "")}</div>
             <label>
               <span>Prompt</span>
-              <textarea data-preset-editor="prompt" aria-label="Prompt for ${escapeAttr(activePreset.name)}" placeholder="Write the SceneMap generation prompt. Macros like {{schema}} are supported.">${escapeHtml(presetDraft.promptText)}</textarea>
+              <div class="scenemap-expandable-textarea">
+                <textarea data-preset-editor="prompt" aria-label="Prompt for ${escapeAttr(activePreset.name)}" placeholder="Write the SceneMap generation prompt. Macros like {{schema}} are supported.">${escapeHtml(presetDraft.promptText)}</textarea>
+                ${expandEditorButton("prompt")}
+              </div>
             </label>
             <div class="scenemap-preset-layout-row">
               <button class="scenemap-pill-action" data-action="edit-layout">Layout</button>
@@ -2122,6 +2128,12 @@ function handleClick(event) {
     drawerView = "settings";
     renderDrawerContent();
   }
+  if (action === "expand-preset-editor") {
+    event.preventDefault();
+    const editor = button.dataset.editor;
+    if (editor === "schema" || editor === "prompt")
+      openPresetExpandedEditor(editor);
+  }
   if (action === "generate") {
     if (isGenerationRequestPending)
       return;
@@ -2200,22 +2212,28 @@ function parseSchemaEditorText(text) {
   return schema;
 }
 function updatePresetEditorControl(target) {
+  const editor = target.dataset.presetEditor;
+  if (editor !== "schema" && editor !== "prompt")
+    return;
+  updatePresetEditorValue(editor, target.value);
+}
+function updatePresetEditorValue(editor, value) {
   const settings = mergeSettings(state.settings);
   const key = settings.schemaPreset;
   const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
   const draft = getPresetEditorDraft(settings, key);
-  if (target.dataset.presetEditor === "prompt") {
-    draft.promptText = target.value;
-    const nextPrompt = target.value || DEFAULT_PROMPT_JSON;
+  if (editor === "prompt") {
+    draft.promptText = value;
+    const nextPrompt = value || DEFAULT_PROMPT_JSON;
     if (nextPrompt !== getPresetPrompt(settings, key)) {
       settings.schemaPresets[key] = { ...preset, promptJson: nextPrompt };
       updateSettingsDraft(settings);
     }
     return;
   }
-  draft.schemaText = target.value;
+  draft.schemaText = value;
   try {
-    const schema = parseSchemaEditorText(target.value);
+    const schema = parseSchemaEditorText(value);
     setPresetSchemaError(draft, null);
     if (!jsonValuesEqual(schema, preset.value)) {
       settings.schemaPresets[key] = { ...preset, value: schema };
@@ -2226,6 +2244,32 @@ function updatePresetEditorControl(target) {
     revealUnsavedSettings();
     setPresetSchemaError(draft, error.message);
   }
+}
+function expandEditorButton(editor) {
+  return `
+    <button
+      type="button"
+      class="scenemap-expand-editor-btn"
+      data-action="expand-preset-editor"
+      data-editor="${editor}"
+      title="Expand editor"
+      aria-label="Expand ${editor === "schema" ? "Schema JSON" : "Prompt"} editor"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/>
+      </svg>
+    </button>
+  `;
+}
+function openPresetExpandedEditor(editor) {
+  const settings = mergeSettings(state.settings);
+  const draft = getPresetEditorDraft(settings, settings.schemaPreset);
+  const title = editor === "schema" ? "SceneMap Schema JSON" : "SceneMap Prompt";
+  const value = editor === "schema" ? draft.schemaText : draft.promptText;
+  openTextEditor(title, value, (nextValue) => {
+    updatePresetEditorValue(editor, nextValue);
+    renderDrawerSettings();
+  });
 }
 function setPresetSchemaError(draft, message) {
   draft.schemaError = message;
@@ -3424,6 +3468,11 @@ var styles = `
 .scenemap-settings-preset-actions .scenemap-pill-action, .scenemap-settings-actions-left .scenemap-pill-action { display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; padding: 5px 9px !important; min-height: 30px; }
 .scenemap-preset-editor { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--lumiverse-border); }
 .scenemap-preset-editor label { display: flex; flex-direction: column; gap: 6px; color: var(--lumiverse-text-muted); font-size: 12px; }
+.scenemap-expandable-textarea { position: relative; width: 100%; }
+.scenemap-expandable-textarea > textarea { width: 100%; box-sizing: border-box; }
+.scenemap-lv .scenemap-expand-editor-btn { position: absolute; top: 5px; right: 5px; z-index: 1; display: flex; align-items: center; justify-content: center; width: var(--lumiverse-btn-icon-sm, 28px); height: var(--lumiverse-btn-icon-sm, 28px); padding: 0; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius-sm, 5px); background: var(--lumiverse-bg, #0f0d15); color: var(--lumiverse-text-dim); cursor: pointer; opacity: 0; transition: all var(--lumiverse-transition-fast, .15s ease); }
+.scenemap-expandable-textarea:hover .scenemap-expand-editor-btn, .scenemap-expandable-textarea:focus-within .scenemap-expand-editor-btn { opacity: 1; }
+.scenemap-lv .scenemap-expand-editor-btn:hover:not(:disabled) { color: var(--lumiverse-primary); border-color: var(--lumiverse-primary); background: var(--lumiverse-bg, #0f0d15); }
 .scenemap-preset-editor textarea { width: 100%; min-height: 180px; box-sizing: border-box; resize: vertical; border: 1px solid var(--lumiverse-border); border-radius: var(--lumiverse-radius, 8px); background: var(--lumiverse-secondary, rgba(128, 128, 128, .15)); color: var(--lumiverse-text); padding: 10px 11px; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .scenemap-preset-editor textarea[data-preset-editor="prompt"] { min-height: 150px; font-family: inherit; }
 .scenemap-preset-editor textarea:focus { outline: none; border-color: var(--lumiverse-primary, var(--lumiverse-accent)); box-shadow: 0 0 0 1px var(--lumiverse-primary-020, transparent); }
