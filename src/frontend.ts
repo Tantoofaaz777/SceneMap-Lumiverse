@@ -565,7 +565,7 @@ function renderDrawerSettings() {
           <input type="checkbox" data-setting="autoGenerateAiTrackers" ${settings.autoGenerateAiTrackers ? "checked" : ""}>
           <span class="scenemap-switch" aria-hidden="true"></span>
         </label>
-        <label class="scenemap-interval-field">
+        <label class="scenemap-interval-field" ${settings.autoGenerateAiTrackers ? "" : "hidden"}>
           <span>Interval</span>
           <input type="number" min="1" step="1" data-setting="autoGenerateInterval" value="${settings.autoGenerateInterval > 1 ? settings.autoGenerateInterval : ""}" placeholder="Empty = 1 = every assistant message">
         </label>
@@ -966,6 +966,10 @@ function updateSettingFromControl(
   }
   state = { ...state, settings };
   queueAutomaticSettingsSave(settings, key, immediate);
+  if (key === "autoGenerateAiTrackers") {
+    const intervalField = rootRef?.querySelector<HTMLElement>(".scenemap-interval-field");
+    if (intervalField) intervalField.hidden = !settings.autoGenerateAiTrackers;
+  }
   if (key === "showInputBarButton") renderChatToolbar();
 }
 
@@ -2320,6 +2324,7 @@ const styles = `
 .scenemap-settings-group h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .scenemap-settings-shell label { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; color: var(--lumiverse-text-muted); }
 .scenemap-auto-row { display: flex; flex-direction: column; gap: 9px; border-top: 1px solid var(--lumiverse-border); border-bottom: 1px solid var(--lumiverse-border); padding: 9px 0; margin: 10px 0; }
+.scenemap-interval-field[hidden] { display: none; }
 .scenemap-sampler-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .scenemap-sampler-row label { margin-top: 0; }
 .scenemap-settings-shell .scenemap-switch-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; color: var(--lumiverse-text); margin: 0; min-width: 0; }
