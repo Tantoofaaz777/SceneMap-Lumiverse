@@ -1399,13 +1399,13 @@ function renderLayoutSection(section: TrackerBoardDisplayLayout["sections"][numb
   return `
     <section class="scenemap-layout-section" data-layout-section-item>
       <header class="scenemap-layout-section-header">
-        ${layoutDragHandle("section", "Drag to reorder section", { section: sectionIndex })}
         <label>
           <span>Section name</span>
           <input data-layout-input="section-title" data-section="${sectionIndex}" value="${escapeAttr(section.title)}">
         </label>
         <div class="scenemap-layout-actions">
           ${iconButton("remove-section", "Remove section", "trash", { section: sectionIndex })}
+          ${layoutDragHandle("section", "Drag to reorder section", { section: sectionIndex })}
         </div>
       </header>
       <div class="scenemap-layout-fields" data-layout-sortable="field" data-section="${sectionIndex}">
@@ -1927,7 +1927,7 @@ function layoutDragHandle(
     indexes.field !== undefined ? `data-field="${indexes.field}"` : "",
     indexes.child !== undefined ? `data-child="${indexes.child}"` : "",
   ].filter(Boolean).join(" ");
-  return `<button type="button" class="scenemap-layout-drag-handle" title="${escapeAttr(label)}" aria-label="${escapeAttr(`${label}. Use arrow keys to reorder.`)}" aria-grabbed="false" ${data}>${layoutIcon("grip")}</button>`;
+  return `<button type="button" class="scenemap-layout-drag-handle" title="${escapeAttr(label)}" aria-label="${escapeAttr(`${label}. Use arrow keys to reorder.`)}" aria-grabbed="false" ${data}>${layoutIcon(kind === "section" ? "grip-horizontal" : "grip")}</button>`;
 }
 
 function iconButton(action: string, label: string, icon: "trash", options: { section?: number; field?: number; child?: number }): string {
@@ -1940,10 +1940,11 @@ function iconButton(action: string, label: string, icon: "trash", options: { sec
   return `<button type="button" class="scenemap-layout-icon-btn" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}" ${data}>${layoutIcon(icon)}</button>`;
 }
 
-function layoutIcon(name: "plus" | "grip" | "trash"): string {
-  const paths: Record<"plus" | "grip" | "trash", string> = {
+function layoutIcon(name: "plus" | "grip" | "grip-horizontal" | "trash"): string {
+  const paths: Record<"plus" | "grip" | "grip-horizontal" | "trash", string> = {
     plus: `<path d="M12 5v14"/><path d="M5 12h14"/>`,
     grip: `<circle cx="9" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="19" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="19" r="1" fill="currentColor" stroke="none"/>`,
+    "grip-horizontal": `<circle cx="5" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="5" cy="15" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="15" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="15" r="1" fill="currentColor" stroke="none"/>`,
     trash: `<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v5"/><path d="M14 11v5"/>`,
   };
   return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
@@ -2326,7 +2327,7 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-layout-intro { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
 .scenemap-layout-sections { display: flex; flex-direction: column; gap: 12px; max-height: min(58vh, 520px); overflow: auto; padding-right: 4px; }
 .scenemap-layout-section { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: var(--lumiverse-radius, 8px); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-.scenemap-layout-section-header { display: grid; grid-template-columns: auto minmax(180px, 1fr) auto; gap: 8px; align-items: end; }
+.scenemap-layout-section-header { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; align-items: end; }
 .scenemap-layout-section label, .scenemap-layout-field label { display: flex; flex-direction: column; gap: 5px; color: var(--lumiverse-text-muted); font-size: 12px; }
 .scenemap-layout-section label.scenemap-layout-check-row, .scenemap-layout-field label.scenemap-layout-check-row { display: inline-flex; flex-direction: row; align-items: center; gap: 7px; margin: 0; }
 .scenemap-layout-check-row input { width: auto !important; margin: 0; }
@@ -2345,6 +2346,7 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-layout-child { display: flex; flex-direction: column; gap: 7px; }
 .scenemap-layout-child-row { display: grid; grid-template-columns: auto minmax(120px, 1fr) minmax(110px, .8fr) minmax(96px, .6fr) auto; gap: 6px; align-items: center; }
 .scenemap-layout-editor .scenemap-layout-drag-handle, .scenemap-layout-drag-fallback .scenemap-layout-drag-handle { width: 36px; height: 36px; min-width: 36px; display: inline-flex; align-items: center; justify-content: center; align-self: end; padding: 0; color: var(--lumiverse-text-dim); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.scenemap-layout-section-header .scenemap-layout-drag-handle { width: 44px; min-width: 44px; color: var(--lumiverse-primary-text, var(--lumiverse-primary, var(--lumiverse-accent))); background: var(--lumiverse-primary-010, color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 10%, transparent)); }
 .scenemap-layout-drag-handle svg { width: 18px; height: 18px; pointer-events: none; }
 .scenemap-layout-editor .scenemap-layout-drag-handle:hover, .scenemap-layout-editor .scenemap-layout-drag-handle:focus-visible { color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
 .scenemap-layout-editor .scenemap-layout-drag-handle[aria-grabbed="true"] { cursor: grabbing; color: var(--lumiverse-primary, var(--lumiverse-accent)); border-color: var(--lumiverse-primary, var(--lumiverse-accent)); }
@@ -2367,8 +2369,9 @@ body.scenemap-layout-is-dragging, body.scenemap-layout-is-dragging * { cursor: g
 .scenemap-tracker-action { min-height: 30px; padding: 5px 10px !important; font-size: calc(12px * var(--lumiverse-font-scale, 1)); }
 .scenemap-runtime-error, .scenemap-inline-error { border: 1px solid rgba(255, 100, 100, 0.45); color: #ffb8b8; background: rgba(120, 0, 0, 0.18); border-radius: var(--lumiverse-radius, 8px); padding: 10px; font-size: 12px; }
 @media (max-width: 760px) {
-  .scenemap-layout-section-header { grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: end; }
-  .scenemap-layout-section-header .scenemap-layout-actions { grid-column: 3; }
+  .scenemap-layout-section-header { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+  .scenemap-layout-section-header .scenemap-layout-actions { grid-column: 2; flex-wrap: nowrap; }
+  .scenemap-layout-section-header .scenemap-layout-icon-btn, .scenemap-layout-section-header .scenemap-layout-drag-handle { width: 44px; height: 44px; min-width: 44px; }
   .scenemap-layout-field-row, .scenemap-layout-child-row { grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; }
   .scenemap-layout-editor .scenemap-layout-drag-handle { width: 44px; height: 44px; min-width: 44px; grid-column: 1; grid-row: 1; }
   .scenemap-layout-field-row > [data-layout-select="field-path"],
