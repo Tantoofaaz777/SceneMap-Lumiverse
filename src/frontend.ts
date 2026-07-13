@@ -1246,11 +1246,21 @@ function editLayout() {
   if (!ctx) return;
 
   const modal = ctx.ui.showModal({ title: "SceneMap Layout", width: 860, maxHeight: 760 });
+  const modalScroller = modal.root.parentElement;
+  const previousOverflowAnchor = modalScroller?.style.overflowAnchor ?? "";
+  if (modalScroller) modalScroller.style.overflowAnchor = "none";
   let layoutSelectHandles: SpindleSelectHandle[] = [];
   let layoutSortables: Sortable[] = [];
+  let scrollRestoreFrame: number | null = null;
   const draw = (preserveScroll = true) => {
     const scroller = modal.root.querySelector(".scenemap-layout-sections") as HTMLElement | null;
     const scrollTop = preserveScroll ? scroller?.scrollTop ?? 0 : 0;
+    const modalScrollTop = preserveScroll ? modalScroller?.scrollTop ?? 0 : 0;
+    const modalScrollLeft = preserveScroll ? modalScroller?.scrollLeft ?? 0 : 0;
+    if (scrollRestoreFrame !== null) {
+      cancelAnimationFrame(scrollRestoreFrame);
+      scrollRestoreFrame = null;
+    }
     destroyLayoutSortables(layoutSortables);
     layoutSortables = [];
     destroySelectHandles(layoutSelectHandles);
@@ -1260,8 +1270,20 @@ function editLayout() {
     if (nextScroller) nextScroller.scrollTop = scrollTop;
     layoutSelectHandles = mountLayoutSelects(modal.root, workingLayout, fieldOptions, draw);
     layoutSortables = mountLayoutSortables(modal.root, workingLayout, draw);
+    if (preserveScroll && modalScroller) {
+      modalScroller.scrollTo({ top: modalScrollTop, left: modalScrollLeft, behavior: "instant" });
+      scrollRestoreFrame = requestAnimationFrame(() => {
+        scrollRestoreFrame = null;
+        if (!modal.root.isConnected) return;
+        modalScroller.scrollTo({ top: modalScrollTop, left: modalScrollLeft, behavior: "instant" });
+        if (nextScroller) nextScroller.scrollTop = scrollTop;
+      });
+    }
   };
   modal.onDismiss(() => {
+    if (modalScroller) modalScroller.style.overflowAnchor = previousOverflowAnchor;
+    if (scrollRestoreFrame !== null) cancelAnimationFrame(scrollRestoreFrame);
+    scrollRestoreFrame = null;
     destroyLayoutSortables(layoutSortables);
     layoutSortables = [];
     destroySelectHandles(layoutSelectHandles);
@@ -1603,8 +1625,6 @@ function mountLayoutSortables(
   for (const container of root.querySelectorAll<HTMLElement>("[data-layout-sortable]")) {
     const kind = container.dataset.layoutSortable as LayoutDragKind | undefined;
     if (!kind) continue;
-    const sectionIndex = readIndex(container.dataset.section);
-    const fieldIndex = readIndex(container.dataset.field);
     const draggable = kind === "section"
       ? "> [data-layout-section-item]"
       : kind === "field"
@@ -1638,11 +1658,13 @@ function mountLayoutSortables(
         document.body.classList.remove("scenemap-layout-is-dragging");
         event.item.querySelector<HTMLElement>(".scenemap-layout-drag-handle")?.setAttribute("aria-grabbed", "false");
         if (event.oldIndex === undefined || event.newIndex === undefined || event.oldIndex === event.newIndex) return;
+        const sectionIndex = readIndex(container.dataset.section);
+        const fieldIndex = readIndex(container.dataset.field);
         if (!reorderLayoutItem(layout, kind, event.oldIndex, event.newIndex, sectionIndex, fieldIndex)) {
           queueMicrotask(() => redraw());
           return;
         }
-        queueMicrotask(() => redraw());
+        queueMicrotask(() => reindexLayoutEditor(root));
       },
       onUnchoose: () => {
         document.body.classList.remove("scenemap-layout-is-dragging");
@@ -1650,6 +1672,39 @@ function mountLayoutSortables(
     }));
   }
   return instances;
+}
+
+function reindexLayoutEditor(root: HTMLElement) {
+  const sectionsContainer = root.querySelector<HTMLElement>("[data-layout-sortable=\"section\"]");
+  if (!sectionsContainer) return;
+  const sections = getDirectLayoutItems(sectionsContainer, "data-layout-section-item");
+  sections.forEach((section, sectionIndex) => {
+    setLayoutDataIndex(section, "section", sectionIndex);
+    const fieldsContainer = section.querySelector<HTMLElement>(":scope > [data-layout-sortable=\"field\"]");
+    if (!fieldsContainer) return;
+    const fields = getDirectLayoutItems(fieldsContainer, "data-layout-field-item");
+    fields.forEach((field, fieldIndex) => {
+      setLayoutDataIndex(field, "field", fieldIndex);
+      const childrenContainer = field.querySelector<HTMLElement>("[data-layout-sortable=\"child\"]");
+      if (!childrenContainer) return;
+      const children = getDirectLayoutItems(childrenContainer, "data-layout-child-item");
+      children.forEach((child, childIndex) => setLayoutDataIndex(child, "child", childIndex));
+    });
+  });
+}
+
+function getDirectLayoutItems(container: HTMLElement, attribute: string): HTMLElement[] {
+  return Array.from(container.children).filter(
+    (element): element is HTMLElement => element instanceof HTMLElement && element.hasAttribute(attribute),
+  );
+}
+
+function setLayoutDataIndex(root: HTMLElement, key: "section" | "field" | "child", index: number) {
+  const attribute = `data-${key}`;
+  if (root.hasAttribute(attribute)) root.dataset[key] = String(index);
+  for (const element of root.querySelectorAll<HTMLElement>(`[${attribute}]`)) {
+    element.dataset[key] = String(index);
+  }
 }
 
 function destroyLayoutSortables(instances: Sortable[]) {
@@ -2326,7 +2381,7 @@ body:has([data-spindle-modal] .scenemap-layout-editor) > [role="listbox"] { z-in
 .scenemap-editor textarea { min-height: min(58vh, 520px); resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
 .scenemap-layout-editor { display: flex; flex-direction: column; gap: 12px; color: var(--lumiverse-text); }
 .scenemap-layout-intro { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
-.scenemap-layout-sections { display: flex; flex-direction: column; gap: 12px; max-height: min(58vh, 520px); overflow: auto; padding-right: 4px; }
+.scenemap-layout-sections { display: flex; flex-direction: column; gap: 12px; max-height: min(58vh, 520px); overflow: auto; overflow-anchor: none; padding-right: 4px; }
 .scenemap-layout-section { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: var(--lumiverse-radius, 8px); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .scenemap-layout-section-header { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; align-items: end; }
 .scenemap-layout-section label, .scenemap-layout-field label { display: flex; flex-direction: column; gap: 5px; color: var(--lumiverse-text-muted); font-size: 12px; }
