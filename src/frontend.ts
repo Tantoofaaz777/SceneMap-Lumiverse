@@ -550,13 +550,7 @@ function renderDrawerSettings() {
   const presetDraft = getPresetEditorDraft(settings, settings.schemaPreset);
   rootRef.innerHTML = `
     <div class="scenemap-shell scenemap-settings-shell">
-      <header class="scenemap-settings-heading">
-        <div>
-          <h2>Settings</h2>
-          <p data-settings-dirty ${settingsDraft.dirty ? "" : "hidden"}>Unsaved preset changes</p>
-        </div>
-        <button class="scenemap-pill-action scenemap-settings-open-panel" data-action="open-dock">Open panel</button>
-      </header>
+      <p class="scenemap-settings-dirty" data-settings-dirty ${settingsDraft.dirty ? "" : "hidden"}>Unsaved preset changes</p>
       ${dockPanelError ? `<div class="scenemap-runtime-error">${escapeHtml(dockPanelError)}</div>` : ""}
       <section class="scenemap-settings-scroll">
         <div class="scenemap-settings-group">
@@ -758,15 +752,6 @@ function handleClick(event: Event) {
   if (action === "open-settings") {
     tabHandle?.activate();
     renderDrawerSettings();
-  }
-  if (action === "open-dock") {
-    ensureDockPanel();
-    if (dockPanelError) {
-      renderDrawerSettings();
-      return;
-    }
-    dockPanelHandle?.expand();
-    renderDockPanel();
   }
   if (action === "refresh") requestState(true);
   if (action === "generate") {
@@ -2329,10 +2314,7 @@ const styles = `
 .scenemap-character { border: 1px solid var(--lumiverse-primary-020, var(--lumiverse-border)); background: color-mix(in srgb, var(--lumiverse-fill) 82%, var(--lumiverse-primary, var(--lumiverse-accent)) 6%); border-radius: 8px; padding: 10px; }
 .scenemap-character h4 { margin: 0 0 10px; color: color-mix(in srgb, var(--lumiverse-text) 72%, var(--lumiverse-primary, var(--lumiverse-accent)) 28%); font-size: 14px; font-weight: 760; }
 .scenemap-settings-shell { gap: 0; }
-.scenemap-settings-heading { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; padding-bottom: 12px; border-bottom: 1px solid var(--lumiverse-border); }
-.scenemap-settings-heading h2 { margin: 0; font-size: 17px; font-weight: 800; }
-.scenemap-settings-heading p { margin: 2px 0 0; color: var(--lumiverse-warning, var(--lumiverse-accent)); font-size: 11px; }
-.scenemap-settings-open-panel { margin-left: auto; white-space: nowrap; }
+.scenemap-settings-dirty { flex: 0 0 auto; margin: 0; padding: 0 0 10px; border-bottom: 1px solid var(--lumiverse-border); color: var(--lumiverse-warning, var(--lumiverse-accent)); font-size: 11px; }
 .scenemap-settings-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px 8px 12px 0; }
 .scenemap-settings-group { border: 1px solid var(--lumiverse-border); background: var(--lumiverse-fill-subtle); border-radius: 8px; padding: 12px; }
 .scenemap-settings-group h3 { margin: 0 0 10px; color: var(--lumiverse-accent); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
