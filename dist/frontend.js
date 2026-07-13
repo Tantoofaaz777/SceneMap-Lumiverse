@@ -437,6 +437,28 @@ function ensureDockPanel() {
   dockRootRef.classList.add("scenemap-lv", "scenemap-dock-root");
   dockRootRef.addEventListener("click", handleClick);
   renderDockPanel();
+  revealDockResizeHandle();
+}
+function revealDockResizeHandle(attempt = 0) {
+  if (!ctxRef || !dockRootRef)
+    return;
+  const contentHost = dockRootRef.parentElement;
+  const panel = contentHost?.parentElement;
+  const handle = panel?.lastElementChild;
+  if (!dockRootRef.isConnected || !(handle instanceof HTMLElement) || handle === contentHost) {
+    if (attempt < 30)
+      requestAnimationFrame(() => revealDockResizeHandle(attempt + 1));
+    return;
+  }
+  const cursor = getComputedStyle(handle).cursor;
+  if (!cursor.includes("resize")) {
+    if (attempt < 30)
+      requestAnimationFrame(() => revealDockResizeHandle(attempt + 1));
+    return;
+  }
+  handle.classList.add("scenemap-dock-resize-handle");
+  handle.classList.toggle("scenemap-dock-resize-horizontal", cursor === "ew-resize");
+  handle.classList.toggle("scenemap-dock-resize-vertical", cursor === "ns-resize");
 }
 function send(payload) {
   ctxRef?.sendToBackend(payload);
@@ -1867,6 +1889,17 @@ function refreshSvg() {
 }
 var styles = `
 .scenemap-lv { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; color: var(--lumiverse-text); }
+.scenemap-dock-resize-handle { background: transparent !important; }
+.scenemap-dock-resize-handle::after { content: ""; position: absolute; border-radius: 999px; background: var(--lumiverse-border-hover); opacity: .72; transition: opacity .15s ease, background .15s ease, box-shadow .15s ease; }
+.scenemap-dock-resize-horizontal { width: 12px !important; }
+.scenemap-dock-resize-horizontal::after { top: 12px; bottom: 12px; left: 50%; width: 2px; transform: translateX(-50%); }
+.scenemap-dock-resize-vertical { height: 12px !important; }
+.scenemap-dock-resize-vertical::after { left: 12px; right: 12px; top: 50%; height: 2px; transform: translateY(-50%); }
+.scenemap-dock-resize-handle:hover::after { background: var(--lumiverse-primary, var(--lumiverse-accent)); opacity: 1; box-shadow: 0 0 8px color-mix(in srgb, var(--lumiverse-primary, var(--lumiverse-accent)) 55%, transparent); }
+@media (max-width: 600px) {
+  .scenemap-dock-resize-horizontal { width: auto !important; height: 12px !important; }
+  .scenemap-dock-resize-horizontal::after { inset: auto 12px 50% 12px; width: auto; height: 2px; transform: translateY(50%); }
+}
 .scenemap-shell { flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px; padding: 14px; min-height: 0; box-sizing: border-box; overflow: hidden; }
 .scenemap-header { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; }
 .scenemap-header h2 { margin: 0; font-size: 18px; font-weight: 700; }
