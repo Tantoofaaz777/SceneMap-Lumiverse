@@ -27,6 +27,7 @@ import { mergeTrackerMetadata } from "./tracker-metadata";
 import { KeyedAsyncQueue } from "./keyed-async-queue";
 import { captureSwipeSnapshot, swipeSnapshotMatches } from "./swipe-snapshot";
 import { resolveMessageCharacterId } from "./group-character-context";
+import { getPreviousTrackerJson, type StoredTracker } from "./tracker-history";
 
 declare const spindle: import("lumiverse-spindle-types").SpindleAPI;
 
@@ -138,12 +139,6 @@ function getTrackerStore(message: ChatMessage | null | undefined): Record<string
   return data as Record<string, unknown>;
 }
 
-type StoredTracker = {
-  value: unknown;
-  presetKey: string | null;
-  schemaHash: string | null;
-};
-
 function getTrackerFromStore(store: Record<string, unknown> | null, swipeId: number): StoredTracker | null {
   if (!store) return null;
   const swipes = store.swipes;
@@ -252,18 +247,6 @@ function getAutoGenerateMessagesRemaining(settings: SceneMapSettings, messages: 
     ? countAssistantMessagesAfter(messages, latest.messageId)
     : countAssistantMessagesBetween(messages, null, activeMessage.id);
   return Math.max(0, interval - messagesDue);
-}
-
-function getTrackerBeforeTargetJson(messages: ChatMessage[], targetId: string, schemaHash: string): string {
-  const targetIndex = messages.findIndex((message) => message.id === targetId);
-  if (targetIndex <= 0) return "{}";
-  for (let i = targetIndex - 1; i >= 0; i -= 1) {
-    const message = messages[i];
-    const tracker = getTrackerFromStore(getTrackerStore(message), getActiveSwipeId(message));
-    if (!tracker || tracker.schemaHash !== schemaHash) continue;
-    return JSON.stringify(tracker.value, null, 2);
-  }
-  return "{}";
 }
 
 function trimMessagesForPrompt(messages: ChatMessage[], targetId: string, includeLastXMessages: number): PromptMessage[] {
@@ -632,7 +615,12 @@ async function generateTracker(userId?: string, expectedLatestMessageId?: string
     const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
     validateSchemaDefinition(preset.value);
     const currentSchemaHash = schemaFingerprint(preset.value);
-    const previousTracker = getTrackerBeforeTargetJson(messages, target.id, currentSchemaHash);
+    const previousTracker = getPreviousTrackerJson(
+      messages,
+      target.id,
+      { presetKey, schemaHash: currentSchemaHash },
+      (message) => getTrackerFromStore(getTrackerStore(message), getActiveSwipeId(message)),
+    );
     const schemaExample = createValidatedSchemaExample(preset.value);
     const exampleResponse = schemaExample === null ? "" : JSON.stringify(schemaExample, null, 2);
     const exampleSection = schemaExample === null

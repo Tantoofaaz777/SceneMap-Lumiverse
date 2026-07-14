@@ -1917,6 +1917,29 @@ function cleanId(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+// src/tracker-history.ts
+function getPreviousTrackerJson(messages, targetId, current, readTracker) {
+  const targetIndex = messages.findIndex((message) => message.id === targetId);
+  if (targetIndex === -1)
+    return "{}";
+  const targetTracker = readTracker(messages[targetIndex]);
+  if (targetTracker && trackerComesFromAnotherPreset(targetTracker, current)) {
+    return serializeTracker(targetTracker.value);
+  }
+  for (let i = targetIndex - 1;i >= 0; i -= 1) {
+    const tracker = readTracker(messages[i]);
+    if (tracker)
+      return serializeTracker(tracker.value);
+  }
+  return "{}";
+}
+function trackerComesFromAnotherPreset(tracker, current) {
+  return tracker.presetKey !== current.presetKey || tracker.schemaHash !== current.schemaHash;
+}
+function serializeTracker(value) {
+  return JSON.stringify(value, null, 2) ?? "{}";
+}
+
 // src/backend.ts
 var activeGenerations = new GenerationRegistry;
 var statePushQueue = new KeyedAsyncQueue;
@@ -2061,19 +2084,6 @@ function getAutoGenerateMessagesRemaining(settings, messages, latest, activeMess
   const interval = Math.max(1, Math.floor(settings.autoGenerateInterval || 1));
   const messagesDue = latest ? countAssistantMessagesAfter(messages, latest.messageId) : countAssistantMessagesBetween(messages, null, activeMessage.id);
   return Math.max(0, interval - messagesDue);
-}
-function getTrackerBeforeTargetJson(messages, targetId, schemaHash) {
-  const targetIndex = messages.findIndex((message) => message.id === targetId);
-  if (targetIndex <= 0)
-    return "{}";
-  for (let i = targetIndex - 1;i >= 0; i -= 1) {
-    const message = messages[i];
-    const tracker = getTrackerFromStore(getTrackerStore2(message), getActiveSwipeId(message));
-    if (!tracker || tracker.schemaHash !== schemaHash)
-      continue;
-    return JSON.stringify(tracker.value, null, 2);
-  }
-  return "{}";
 }
 function trimMessagesForPrompt(messages, targetId, includeLastXMessages) {
   const targetIndex = messages.findIndex((message) => message.id === targetId);
@@ -2410,7 +2420,7 @@ async function generateTracker(userId, expectedLatestMessageId) {
     const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
     validateSchemaDefinition(preset.value);
     const currentSchemaHash = schemaFingerprint(preset.value);
-    const previousTracker = getTrackerBeforeTargetJson(messages, target.id, currentSchemaHash);
+    const previousTracker = getPreviousTrackerJson(messages, target.id, { presetKey, schemaHash: currentSchemaHash }, (message) => getTrackerFromStore(getTrackerStore2(message), getActiveSwipeId(message)));
     const schemaExample = createValidatedSchemaExample(preset.value);
     const exampleResponse = schemaExample === null ? "" : JSON.stringify(schemaExample, null, 2);
     const exampleSection = schemaExample === null ? "" : `EXAMPLE OF A PERFECT RESPONSE:
