@@ -19,6 +19,8 @@ export function validateSchemaDefinition(schema: Record<string, unknown>): void 
 export function createValidatedSchemaExample(schema: Record<string, unknown>): unknown | null {
   const example = schemaToExample(schema);
   try {
+    // Example construction is best-effort. Omitting an invalid example is safer
+    // than teaching the model a response that contradicts the user's schema.
     return createValidator(schema).validate(example).valid ? example : null;
   } catch {
     return null;
@@ -53,6 +55,8 @@ export function validateTrackerData(
 }
 
 function createValidator(schema: Record<string, unknown>): Validator {
+  // The validator primarily validates instances. This preflight catches malformed
+  // keyword shapes consistently before a generation is allowed to start.
   assertSchemaWellFormed(schema);
   return new Validator(schema as Schema, detectDraft(schema), false);
 }
@@ -62,6 +66,7 @@ function detectDraft(schema: Record<string, unknown>): SchemaDraft {
   if (/draft-?0?4/i.test(declaration)) return "4";
   if (/2019-09/i.test(declaration)) return "2019-09";
   if (/2020-12/i.test(declaration)) return "2020-12";
+  // Draft-07 remains the compatibility default for schemas without a declaration.
   return "7";
 }
 
@@ -119,6 +124,7 @@ function assertSchemaWellFormed(schema: unknown, path = "#", seen = new WeakSet<
 }
 
 function formatSchemaErrors(errors: OutputUnit[]): string {
+  // Parent `properties`/`items` errors usually duplicate a more useful leaf error.
   const meaningful = errors.filter((error) => !["properties", "items"].includes(error.keyword));
   const selected = (meaningful.length > 0 ? meaningful : errors).slice(0, 6);
   const messages = selected.map((error) => {

@@ -1,3 +1,8 @@
+/**
+ * Serializes asynchronous work per key while allowing different keys to run in
+ * parallel. A rejected task is absorbed only in the internal tail, preventing
+ * one failed save/state push from poisoning every later task for that user.
+ */
 export class KeyedAsyncQueue {
   private readonly tails = new Map<string, Promise<void>>();
 

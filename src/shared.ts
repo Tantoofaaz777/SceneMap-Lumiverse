@@ -248,6 +248,8 @@ export function mergeSettings(value: Partial<SceneMapSettings> | null | undefine
   const currentValue = { ...value } as Partial<SceneMapSettings> & {
     showMessageButtons?: unknown;
   };
+  // This removed setting may still exist in older userStorage files. Do not let
+  // object spreading accidentally reintroduce the message-level button.
   delete currentValue.showMessageButtons;
   const schemaPresets = {
     ...base.schemaPresets,
@@ -278,6 +280,8 @@ export function mergeSettings(value: Partial<SceneMapSettings> | null | undefine
 }
 
 export function mergeAutomaticSettingsPatch(currentValue: SceneMapSettings, value: unknown): SceneMapSettings {
+  // Auto-saved controls send narrow patches. Whitelisting their keys prevents a
+  // delayed patch from overwriting presets that were explicitly saved meanwhile.
   const current = mergeSettings(currentValue);
   if (!value || typeof value !== "object" || Array.isArray(value)) return current;
   const patch = value as Record<string, unknown>;
@@ -307,6 +311,8 @@ export function mergeAutomaticSettingsPatch(currentValue: SceneMapSettings, valu
 }
 
 export function mergePresetSettings(currentValue: SceneMapSettings, incomingValue: SceneMapSettings): SceneMapSettings {
+  // The inverse boundary of mergeAutomaticSettingsPatch: an explicit preset save
+  // owns only preset data and must preserve newer generation/interface settings.
   const current = mergeSettings(currentValue);
   const incoming = mergeSettings(incomingValue);
   return mergeSettings({
@@ -350,6 +356,8 @@ export function jsonValuesEqual(left: unknown, right: unknown): boolean {
 }
 
 export function schemaFingerprint(schema: Record<string, unknown>): string {
+  // This is a stable provenance identifier, not a cryptographic integrity check.
+  // Sorting object keys avoids treating formatting/key order as a schema change.
   const text = stableJsonStringify(schema);
   let hash = 0x811c9dc5;
   for (let index = 0; index < text.length; index += 1) {
@@ -371,6 +379,8 @@ function stableJsonStringify(value: unknown): string {
 }
 
 export function schemaToExample(schema: any, rootSchema = schema, seenRefs = new Set<string>()): unknown {
+  // Build a useful prompt example without attempting to become a second JSON
+  // Schema validator. createValidatedSchemaExample verifies the result afterward.
   if (!schema || typeof schema !== "object") return null;
   if (schema.example !== undefined) return schema.example;
   if (schema.const !== undefined) return schema.const;
@@ -471,6 +481,8 @@ export function parseModelJson(content: string): object {
 }
 
 export function renderPrompt(template: string, values: Record<string, string>): string {
+  // Replace only SceneMap-owned macros. Character/persona/Lumiverse macros must
+  // remain intact for the later context-aware macro resolution pass.
   return template.replace(/\{\{\s*(schema|previous_tracker|example_response|example_section)\s*\}\}/g, (_match, key) => values[key] ?? "");
 }
 
@@ -494,6 +506,8 @@ export function trackerToText(tracker: unknown, layout?: TrackerBoardDisplayLayo
   if (!tracker || typeof tracker !== "object" || Array.isArray(tracker)) return "";
   const record = tracker as Record<string, unknown>;
   const progressPaths = collectProgressPaths(layout);
+  // Preserve the readable legacy SceneMap summary when standard fields exist,
+  // then append every custom field so personalized schemas never lose data.
   const sceneLines = renderSceneMapSummary(record, progressPaths);
   if (sceneLines.length > 0) {
     const additionalLines = renderAdditionalSceneMapFields(record, progressPaths);
@@ -501,6 +515,7 @@ export function trackerToText(tracker: unknown, layout?: TrackerBoardDisplayLayo
     return sceneLines.join("\n");
   }
 
+  // A fully custom schema has no standard summary, so render it generically.
   const lines: string[] = [];
   for (const [key, value] of Object.entries(record)) {
     const child = trackerValueToText(key, value, 0, key, progressPaths);

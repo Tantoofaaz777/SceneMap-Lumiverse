@@ -5,6 +5,11 @@ export type TrackerProvenance = {
   schemaHash: string;
 };
 
+/**
+ * Replace one swipe's tracker without clobbering other swipes or metadata owned
+ * by Lumiverse/other extensions. Legacy single-value SceneMap metadata is folded
+ * into the per-swipe v3 structure the first time the message is updated.
+ */
 export function mergeTrackerMetadata(
   metadata: Record<string, unknown> | undefined,
   data: unknown,

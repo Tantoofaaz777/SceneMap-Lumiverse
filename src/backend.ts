@@ -74,8 +74,12 @@ type ConnectionSummary = {
 };
 
 const activeGenerations = new GenerationRegistry();
+// State responses and settings writes are independently ordered per user. This
+// prevents slow storage/API calls from delivering stale acknowledgements last.
 const statePushQueue = new KeyedAsyncQueue();
 const settingsSaveQueue = new KeyedAsyncQueue();
+// Pull macros do not carry the frontend state, so cache only the layout metadata
+// needed to format the latest tracker for each chat.
 const macroLayoutsByChatId = new Map<string, {
   layout: ReturnType<typeof getPresetLayout>;
   schemaHash: string;
@@ -155,6 +159,8 @@ function getTrackerFromStore(store: Record<string, unknown> | null, swipeId: num
     }
   }
 
+  // Pre-v3 metadata stored one tracker directly on the SceneMap object. Reading
+  // it here keeps old chats usable until their next write migrates the structure.
   if ("value" in store) {
     const legacySwipeId = store.swipeId;
     if (typeof legacySwipeId !== "number" || legacySwipeId === swipeId) {
@@ -186,6 +192,8 @@ function withoutTrackerMetadata(message: ChatMessage): Record<string, unknown> {
       updatedAt: typeof existing.updatedAt === "string" ? existing.updatedAt : new Date().toISOString(),
     };
   }
+  // Delete only the active swipe. Other swipe trackers and unrelated extension
+  // metadata belong to the same message and must survive.
   delete swipes[String(swipeId)];
   if (Object.keys(swipes).length === 0) {
     delete next[MESSAGE_METADATA_KEY];
@@ -317,6 +325,8 @@ async function buildReferencePromptMessages(
     buildPersonaReference(chat, userId, characterId),
     buildActiveWorldInfo(chat.id, userId),
   ]);
+  // Scenario intentionally leads World Info instead of the character block. Each
+  // reference block is a separate system message so sources stay distinguishable.
   const worldInfoReference = separatedReferenceBlock("World Info", [
     characterContext.scenario,
     ...activeWorldInfo,
@@ -415,6 +425,9 @@ function getCharacterAlternateFieldSelections(character: CharacterCard, chat: Ac
   const metadata = chat.metadata;
   if (!metadata) return null;
 
+  // Lumiverse stores group selections per character, while one-on-one chats use
+  // a single selection object. Do not borrow the primary member's variant for a
+  // different group speaker when that member has no explicit selection.
   if (metadata.group === true) {
     const byCharacter = getRecord(metadata.group_alternate_field_selections);
     const characterId = compactText(character.id);
@@ -454,6 +467,7 @@ async function resolvePersonaMacro(
       chatId: chat.id,
       characterId: characterId || undefined,
       userId,
+      // Context assembly is read-only; resolving it must not commit macro state.
       commit: false,
     });
     const text = compactText(result.text);
@@ -497,6 +511,8 @@ async function buildState(userId: string): Promise<SceneMapState> {
   const activeMessage = findLatestAssistantMessage(messages);
   if (latest && chat) {
     const trackerMessage = messages.find((message) => message.id === latest.messageId);
+    // Resolve macros only in the transient display copy. Stored JSON remains the
+    // source of truth and can be resolved again under the correct chat context.
     latest.displayData = await resolveTrackerDisplayData(latest.data, {
       chatId: chat.id,
       characterId: resolveMessageCharacterId(chat, trackerMessage),
@@ -519,6 +535,8 @@ async function buildState(userId: string): Promise<SceneMapState> {
 }
 
 function pushState(userId: string, response: Record<string, unknown> = {}): Promise<void> {
+  // Queue the complete build+send operation, not just sendToFrontend, otherwise
+  // an older slow build could arrive after a newer state snapshot.
   return statePushQueue.enqueue(userId, async () => {
     const state = await buildState(userId);
     if (state.chatId) {
@@ -542,6 +560,8 @@ async function resolveSceneMapMacro(context: SceneMapMacroContext): Promise<stri
     const latest = getLatestTrackerEntry(messages);
     if (!latest) return "";
     const cached = macroLayoutsByChatId.get(chatId);
+    // Never interpret old tracker data through a layout built for another schema.
+    // Generic text formatting is safer until that tracker is regenerated.
     const layout = cached && latest.schemaHash === cached.schemaHash ? cached.layout : undefined;
     return trackerToText(latest.data, layout);
   } catch (error) {
@@ -565,6 +585,8 @@ async function updateChatPreset(chatId: string, presetKey: string, userId: strin
 }
 
 function getChatPresetKey(chat: { metadata?: Record<string, unknown> } | null, settings: SceneMapSettings): string {
+  // A chat-specific preset overrides the global picker only while that preset
+  // still exists; deleted presets fall back cleanly to the global selection.
   const meta = chat?.metadata?.[CHAT_METADATA_KEY];
   const key = meta && typeof meta === "object" ? (meta as Record<string, unknown>).schemaPreset : null;
   return typeof key === "string" && settings.schemaPresets[key] ? key : settings.schemaPreset;
@@ -581,6 +603,8 @@ async function generateTracker(userId?: string, expectedLatestMessageId?: string
   if (!userId) throw new Error("SceneMap needs a user context before generating a tracker.");
   const activeGeneration = activeGenerations.get(userId);
   if (activeGeneration) {
+    // Auto-generation requests are best-effort and must never cancel a manual
+    // generation already in progress. A manual second click intentionally cancels.
     if (expectedLatestMessageId) {
       await pushState(userId);
       return;
@@ -615,6 +639,8 @@ async function generateTracker(userId?: string, expectedLatestMessageId?: string
     const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
     validateSchemaDefinition(preset.value);
     const currentSchemaHash = schemaFingerprint(preset.value);
+    // Selection also handles schema migration on the target message; see the
+    // documented invariants in tracker-history.ts.
     const previousTracker = getPreviousTrackerJson(
       messages,
       target.id,
@@ -658,6 +684,8 @@ async function generateTracker(userId?: string, expectedLatestMessageId?: string
       signal: controller.signal,
     });
     const parsed = parseAndValidateModelJson(result.content, preset.value);
+    // Generation can be slow. Re-fetch before writing so concurrent metadata from
+    // Lumiverse or another extension is merged instead of overwritten.
     const currentMessages = (await spindle.chat.getMessages(chat.id)) as ChatMessage[];
     const currentTarget = currentMessages.find((message) => message.id === target.id);
     if (!currentTarget) throw new Error("SceneMap target message was deleted during generation.");
@@ -731,6 +759,8 @@ async function editTracker(chatId: string, messageId: string, swipeId: number, d
   const preset = settings.schemaPresets[presetKey] ?? settings.schemaPresets[settings.schemaPreset] ?? settings.schemaPresets.default;
   const currentSchemaHash = schemaFingerprint(preset.value);
   const storedTracker = getTrackerFromStore(getTrackerStore(message), swipeId);
+  // Editing an old shape under a new schema could silently discard information.
+  // Require regeneration, which can migrate the old tracker through the model.
   if (!storedTracker || storedTracker.schemaHash !== currentSchemaHash) {
     throw new Error("This tracker was generated with another or unknown schema. Regenerate it before editing.");
   }
@@ -769,6 +799,8 @@ async function deleteTracker(messageId: string, userId?: string) {
   await pushState(userId);
 }
 
+// The Lumiverse runtime accepts async volatile pull handlers, while the installed
+// type package still narrows this overload to the static handler shape.
 const registerPullMacro = spindle.registerMacro as unknown as (definition: PullMacroDefinition) => void;
 registerPullMacro({
   name: "scenemap",

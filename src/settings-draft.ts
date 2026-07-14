@@ -1,3 +1,8 @@
+/**
+ * Tracks explicit preset saves by content fingerprint. An acknowledgement marks
+ * the snapshot that was actually sent as saved, not the possibly newer draft;
+ * edits made while saving therefore remain dirty and cannot be lost silently.
+ */
 export class SettingsDraftTracker {
   private currentFingerprint: string | null = null;
   private savedFingerprint: string | null = null;

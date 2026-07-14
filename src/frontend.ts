@@ -133,6 +133,8 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const offBackend = ctx.onBackendMessage((payload: any) => {
     if (payload?.type === "state") {
+      // Full state snapshots can arrive while a native select is open or text is
+      // focused. Reconcile drafts first, then avoid rebuilding an unchanged form.
       const preserveActiveSettings = settingsSurfaceHasActiveInteraction();
       const previousState = state;
       isGenerationRequestPending = false;
@@ -245,6 +247,8 @@ export function setup(ctx: SpindleFrontendContext) {
 function ensureDockPanel() {
   const ctx = ctxRef;
   if (!ctx || mergeSettings(state.settings).trackerPlacement !== "dock") return;
+  // Lumiverse connects a requested panel asynchronously. The grace period avoids
+  // destroying and recreating a valid panel during that short detached phase.
   if (dockRootRef && dockPanelHandle && (dockRootRef.isConnected || Date.now() - dockPanelCreatedAt < 1000)) return;
   dockRootRef?.removeEventListener("click", handleClick);
   cleanupDockResizeHandles();
@@ -289,6 +293,8 @@ function destroyDockPanel() {
 }
 
 function syncTrackerPlacement() {
+  // Defaults say "dock", but persisted settings may say "drawer". Waiting for the
+  // first backend state prevents a dock from flashing briefly during startup.
   if (!hasReceivedInitialState) {
     destroyDockPanel();
     return;
@@ -303,6 +309,8 @@ function syncTrackerPlacement() {
 }
 
 function watchDockResizeHandle() {
+  // The dock API exposes resizability but no resize-end callback or handle node.
+  // Discover Lumiverse's native handle so its size can be styled and persisted.
   dockResizeObserver?.disconnect();
   cleanupDockResizeHandles();
   let observedHost: HTMLElement | null = null;
@@ -425,6 +433,7 @@ function settingsSurfaceHasActiveInteraction(): boolean {
   const settingsVisible = mergeSettings(state.settings).trackerPlacement === "dock" || drawerView === "settings";
   if (!settingsVisible) return false;
   const activeElement = document.activeElement;
+  // An expanded native select is portalled, so focus alone is not sufficient.
   return (activeElement instanceof Element && rootRef.contains(activeElement))
     || rootRef.querySelector('[aria-expanded="true"]') !== null;
 }
@@ -541,6 +550,8 @@ function trackerPanelMarkup(): string {
   const settings = mergeSettings(state.settings);
   const latest = state.latest;
   const trackerValue = latest?.displayData ?? latest?.data;
+  // Until regeneration, derive a layout from the stored tracker itself. Applying
+  // the new preset layout would hide fields from the old schema.
   const layout = latest && !latest.schemaMatchesCurrent
     ? createTrackerDataLayout(trackerValue)
     : getPresetLayout(settings, state.effectivePresetKey);
@@ -569,6 +580,8 @@ function renderDrawerSettings() {
   if (!rootRef) return;
   if (drawerScrollRestoreFrame !== null) cancelAnimationFrame(drawerScrollRestoreFrame);
   drawerScrollRestoreFrame = null;
+  // mountSelect requires rebuilding its host nodes. Preserve every possible scroll
+  // owner because Lumiverse may place scrolling above the extension root.
   const scrollSnapshot = captureScrollPositions(rootRef);
   destroySelectHandles(drawerSelectHandles);
   drawerSelectHandles = [];
@@ -784,6 +797,8 @@ function updateNativeSetting(
 }
 
 function queueAutomaticSettingsSave(settings: SceneMapSettings, key: AutomaticallySavedSetting, immediate: boolean) {
+  // Text/number inputs are debounced; discrete controls flush immediately. The
+  // draft tracker keeps either path optimistic across backend state snapshots.
   automaticSettingsDraft.queue(key, settings[key]);
   if (automaticSaveTimer) clearTimeout(automaticSaveTimer);
   automaticSaveTimer = null;
@@ -815,6 +830,8 @@ type ElementScrollSnapshot = {
 
 function captureScrollPositions(root: HTMLElement): ElementScrollSnapshot[] {
   const snapshots: ElementScrollSnapshot[] = [];
+  // The drawer/modal host, not SceneMap itself, can own scroll depending on the
+  // Lumiverse viewport. Snapshot the ancestor chain instead of guessing one node.
   for (let element: HTMLElement | null = root; element; element = element.parentElement) {
     snapshots.push({ element, top: element.scrollTop, left: element.scrollLeft });
   }
@@ -951,6 +968,8 @@ async function confirmDeleteTracker() {
     variant: "danger",
     confirmLabel: "Delete",
   });
+  // The confirmation is asynchronous; never delete a different tracker if the
+  // user switches chats while the dialog is open.
   if (!result?.confirmed || state.chatId !== chatId || state.latest?.messageId !== messageId) return;
   clearTrackerRuntimeError();
   send({ type: "delete_tracker", messageId });
@@ -964,6 +983,8 @@ function updateSettingsDraft(settings: SceneMapSettings) {
 }
 
 function presetSettingsFingerprint(settings: SceneMapSettings): string {
+  // Invalid JSON cannot be copied into schemaPresets yet, but it must still make
+  // the preset dirty and survive state refreshes until the user fixes it.
   const invalidSchemaDrafts = Object.fromEntries(
     Array.from(presetEditorDrafts.entries())
       .filter(([, draft]) => draft.schemaError !== null)
@@ -1132,6 +1153,8 @@ function ensureActivePresetEditorValid(): boolean {
 }
 
 function preparePresetDraftsForSave(): boolean {
+  // Preset switches keep editor drafts in memory. Validate all of them so Save
+  // cannot silently omit an invalid edit made in a previously selected preset.
   const settings = mergeSettings(state.settings);
   for (const key of presetEditorDrafts.keys()) {
     if (!settings.schemaPresets[key]) continue;
@@ -1492,6 +1515,8 @@ function editLayout() {
   const key = settings.schemaPreset;
   const preset = settings.schemaPresets[key] ?? settings.schemaPresets.default;
   const fieldOptions = extractSchemaFieldOptions(preset.value);
+  // Work on an isolated clone: Cancel must not mutate the live settings object,
+  // and equality against the original avoids false "unsaved changes" states.
   const originalLayout = cloneLayout(getPresetLayout(settings, key));
   const workingLayout = cloneLayout(originalLayout);
   const ctx = ctxRef;
@@ -1500,6 +1525,8 @@ function editLayout() {
   const modal = ctx.ui.showModal({ title: "SceneMap Layout", width: 860, maxHeight: 760 });
   const modalScroller = modal.root.parentElement;
   const previousOverflowAnchor = modalScroller?.style.overflowAnchor ?? "";
+  // Browser scroll anchoring fights DOM redraws in the modal and causes small
+  // jumps on mobile, so SceneMap restores the exact position itself.
   if (modalScroller) modalScroller.style.overflowAnchor = "none";
   let layoutSelectHandles: SpindleSelectHandle[] = [];
   let layoutSortables: Sortable[] = [];
@@ -1524,6 +1551,7 @@ function editLayout() {
     layoutSortables = mountLayoutSortables(modal.root, workingLayout, draw);
     if (preserveScroll && modalScroller) {
       modalScroller.scrollTo({ top: modalScrollTop, left: modalScrollLeft, behavior: "instant" });
+      // Restore once synchronously and once after Lumiverse finishes layout.
       scrollRestoreFrame = requestAnimationFrame(() => {
         scrollRestoreFrame = null;
         if (!modal.root.isConnected) return;
@@ -1559,6 +1587,7 @@ function editLayout() {
     }
   });
   modal.root.addEventListener("keydown", (event) => {
+    // Drag handles double as an accessible keyboard reordering control.
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
     const handle = (event.target as HTMLElement).closest<HTMLElement>("[data-layout-drag]");
     if (!handle) return;
@@ -1844,6 +1873,7 @@ function mountLayoutSelects(
           field.display = nextValue as TrackerFieldDisplay;
         } else if (kind === "field-center") {
           field.center = nextValue === "yes";
+          // No structural change: avoid a redraw that would close the native select.
           return;
         } else if (kind === "child-path" && childIndex !== null && field.fields?.[childIndex]) {
           const parentOption = findFieldOption(options, field.path);
@@ -1855,6 +1885,7 @@ function mountLayoutSelects(
           field.fields[childIndex].display = nextValue as TrackerFieldDisplay;
         } else if (kind === "child-center" && childIndex !== null && field.fields?.[childIndex]) {
           field.fields[childIndex].center = nextValue === "yes";
+          // No structural change: avoid a redraw that would close the native select.
           return;
         }
         queueMicrotask(() => redraw());
@@ -1898,6 +1929,8 @@ function mountLayoutSortables(
       delayOnTouchOnly: true,
       touchStartThreshold: 5,
       fallbackTolerance: 4,
+      // Sortable's fallback path is the consistent implementation across desktop
+      // pointer input and mobile long-press; native HTML drag is unreliable on touch.
       forceFallback: true,
       fallbackOnBody: true,
       scroll: scrollContainer ?? true,
@@ -1922,6 +1955,8 @@ function mountLayoutSortables(
           queueMicrotask(() => redraw());
           return;
         }
+        // Sortable already moved the DOM. Reindex in place instead of redrawing;
+        // a redraw here makes mobile browsers jump to a new scroll anchor.
         queueMicrotask(() => {
           reindexLayoutEditor(root);
           announceLayoutReorder(root, kind, event.newIndex!, getLayoutItemCount(layout, kind, sectionIndex, fieldIndex));
@@ -2055,6 +2090,7 @@ function schemaToOptions(
 ): SchemaFieldOption[] {
   const source = getRecord(schema);
   const ref = typeof source.$ref === "string" && source.$ref.startsWith("#/") ? source.$ref : null;
+  // Recursive schemas are valid, but the visual editor must expose a finite tree.
   if (depth >= MAX_LAYOUT_SCHEMA_DEPTH || (ref && seenRefs.has(ref))) {
     return [{ path, label: schemaLabel(source, labelSeed), display: defaultDisplayForSchema(source, path) }];
   }
@@ -2117,6 +2153,8 @@ function normalizeSchemaForLayout(
     }
   }
 
+  // This normalization is field discovery for the layout editor, not validation.
+  // Merging variant properties makes every potentially renderable field visible.
   for (const keyword of ["allOf", "oneOf", "anyOf"] as const) {
     const variants = source[keyword];
     if (!Array.isArray(variants)) continue;
@@ -2184,6 +2222,8 @@ function getAvailableFieldOptions(layout: TrackerBoardDisplayLayout, options: Sc
     }
   }
   const available = options.filter((option) => !used.has(option.path));
+  // Keep removed paths visible long enough to show a useful warning; silently
+  // dropping them would make a schema edit look like unexplained data loss.
   if (currentPath && !available.some((option) => option.path === currentPath)) {
     available.unshift({ path: currentPath, label: `${humanizeTrackerKey(currentPath.split(".").pop() || currentPath)} (missing from schema)`, display: "text" });
   }
@@ -2263,6 +2303,7 @@ function validateLayout(layout: TrackerBoardDisplayLayout, options: SchemaFieldO
           throw new Error(`Card field "${child.path}" no longer exists under "${field.path}" in the current schema.`);
         }
       }
+      // Centering has meaning only for chips; prune stale values when display type changes.
       field.center = field.display === "chips" ? field.center === true : undefined;
     }
   }
@@ -2322,6 +2363,8 @@ function openTextEditor(
     else showTrackerError(message);
     return;
   }
+  // The expanded editor lives in the backend-owned Lumiverse modal. Correlate its
+  // asynchronous result with the exact local callback that opened it.
   const requestId = `editor-${Date.now()}-${++editorRequestSeq}`;
   pendingTextEditors.set(requestId, {
     title,
@@ -2348,6 +2391,7 @@ function handleTextEditorResult(payload: any) {
   } catch (err) {
     if (pending.surface === "settings") showSettingsError((err as Error).message);
     else showTrackerError((err as Error).message);
+    // Reopen with the rejected text so a validation error never destroys the edit.
     openTextEditor(pending.title, text, pending.onSave, pending.surface);
   }
 }
@@ -2418,6 +2462,8 @@ function renderTracker(value: unknown, layout: TrackerBoardDisplayLayout): strin
 }
 
 function createTrackerDataLayout(value: unknown): TrackerBoardDisplayLayout {
+  // Used only when provenance says the configured layout belongs to another
+  // schema. Infer a neutral layout so the old tracker remains readable/migratable.
   const record = getRecord(value);
   return {
     sections: [{

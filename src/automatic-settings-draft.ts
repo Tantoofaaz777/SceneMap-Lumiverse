@@ -1,3 +1,8 @@
+/**
+ * Keeps optimistic auto-save patches on top of full state snapshots returned by
+ * the backend. Pending edits must win over older in-flight requests so a slow
+ * acknowledgement cannot make a recently typed value flicker or disappear.
+ */
 export class AutomaticSettingsDraftTracker<T extends object> {
   private pending: Partial<T> = {};
   private readonly inFlight = new Map<string, Partial<T>>();
@@ -22,6 +27,7 @@ export class AutomaticSettingsDraftTracker<T extends object> {
     const patch = this.inFlight.get(requestId);
     if (!patch) return false;
     this.inFlight.delete(requestId);
+    // Requeue the failed patch, but never overwrite edits made after it was sent.
     this.pending = { ...patch, ...this.pending };
     return true;
   }

@@ -4,6 +4,11 @@ export type ActiveGeneration = {
   controller: AbortController;
 };
 
+/**
+ * Owns at most one generation per user. Methods compare the generation object
+ * by identity so the finally block of an old/cancelled request cannot remove a
+ * newer request that happens to belong to the same user.
+ */
 export class GenerationRegistry {
   private readonly items = new Map<string, ActiveGeneration>();
 

@@ -10,6 +10,7 @@ export type SwipeSnapshot = {
   date: number | null;
 };
 
+/** Capture the exact swipe being generated, even if it is not currently active. */
 export function captureSwipeSnapshot(message: SwipeSnapshotSource, swipeId: number): SwipeSnapshot | null {
   let content: string | undefined;
   if (Array.isArray(message.swipes)) content = message.swipes[swipeId];
@@ -28,6 +29,8 @@ export function swipeSnapshotMatches(
 ): boolean {
   const current = captureSwipeSnapshot(message, swipeId);
   if (!current || current.content !== snapshot.content) return false;
+  // Dates distinguish a replaced swipe from an identical-looking copy. Merely
+  // navigating to another swipe does not change the captured swipe and is safe.
   if (snapshot.date !== null && current.date !== null && current.date !== snapshot.date) return false;
   return true;
 }
